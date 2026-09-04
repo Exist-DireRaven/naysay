@@ -35,7 +35,9 @@ tool. If you can't, that's the part to study next.
 | `Message` | One turn of conversation, role + content. Serialized verbatim. |
 | `ChatRequest` | POST body. Fields: `model`, `messages`, `max_tokens`, `temperature`, optional `stream`. |
 | `ChatChoice` / `ChatChoiceMessage` | Non-streaming response body. |
-| `ChatChunk` / `ChatChunkChoice` / `ChatChoiceDelta` | Streaming chunk body. `delta` and `content` are `#[serde(default)]` so a missing-field chunk (which finish_reason chunks emit) doesn't abort parsing. |
+| `ChatChunk` / `ChatChunkChoice` / `ChatChoiceDelta` | Streaming chunk body. `delta` and `content` are `#[serde(default)]` so a missing-field chunk (which finish_reason chunks emit) doesn't abort parsing. `usage` optional — many providers append it to the final chunk. |
+| `Usage` | Token accounting for one call (prompt + completion), `total()`. Surfaced via the `LAST_USAGE` store so the UI layer nearest the user can show the meter. |
+| `store_last_usage` / `take_last_usage` / `note_usage_stderr` | Set by both call paths after a response; the six command functions print the stderr note (CLI/REPL), the TUI task packs it into `TuiEvent::Result`. |
 | `ChatResponse` | Wrapper for non-streaming parse. |
 
 ### Provider configuration
@@ -91,7 +93,9 @@ tool. If you can't, that's the part to study next.
 | symbol | what it does |
 |--------|--------------|
 | `call_llm` | Wrapper. Pins to `config().model`. System prompt + history + user prompt → POST → parse → content. |
-| `call_llm_with_model` | Inner. Takes model name explicitly so the TUI can pass `/model`-chosen values. |
+| `call_llm_with_model` | Inner. Takes model name explicitly so the TUI can pass `/model`-chosen values. POSTs via `post_chat_with_retry`, stores usage. |
+| `post_chat_with_retry` | Resilient POST: 429/5xx retried up to 2x (1s/2s backoff), body never consumed before the retry decision. Silent while the TUI owns the terminal (`TUI_ACTIVE` flag); 10s connect timeout. |
+| `is_retryable_status` / `backoff_secs` | Retry policy, pure functions (unit-tested). |
 | `call_llm_stream` | Streaming twin. Same request shape but `stream: true`, then `bytes_stream` → `drain_sse_events` per chunk. |
 | `drain_sse_events` | Hand-rolled SSE parser. Drains complete events from buffer (keeps partial trailing event). Emits deltas. Tolerates missing-delta, malformed JSON, finish_reason chunks. **Has 9 unit tests.** |
 
@@ -176,7 +180,8 @@ tool. If you can't, that's the part to study next.
 | `apply_completion` | Tab completion on first word. First Tab: longest-common-prefix extension. Repeated Tab: cycle through candidates. |
 | `longest_common_prefix` | Helper. |
 | `submit_line` | Dispatch a command. Routes to `help` / `/context` / `/clear` / `/model` / `/resume [file]` / the curated command map, else freeform. `@path` inlining before send. Every submission lands in `input_history` and the session log; an LLM response is logged on `Result(Ok)`. Spawns an async task that does the LLM call and pushes `Delta` events into `tx`. |
-| `inline_files` | Substitute `@path` tokens with file contents (truncated to 24k chars). Returns a `(expanded, report)` pair so the UI can confirm what was loaded. |
+| `inline_files` | Substitute `@path` tokens with file contents (truncated to 24k chars); `@dir` inlines a whole source tree. Returns `(expanded, InlineReport)` so the UI can confirm what was loaded. |
+| `collect_dir_files` / `walk_for_inline` / `inline_wanted` | The `@dir` engine: recursive walk, sorted per directory, extension allowlist, vendor/build dirs skipped, 60k-char budget, overflow reported inline. |
 
 ### LLM command set (TUI variants)
 
