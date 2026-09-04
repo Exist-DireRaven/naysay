@@ -1,0 +1,18 @@
+# Rust
+/target/
+
+# Editor / OS
+*.swp
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Secrets - never commit
+.env
+
+# naysay exports (Ctrl+S / --save output landing in the repo dir)
+naysay-*.md
+pair-*.md
+# release notes snapshot (regenerated per tag, see CONTRIBUTING)
+RELEASE_NOTES.md

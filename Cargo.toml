@@ -1,0 +1,24 @@
+[package]
+name = "naysay"
+version = "0.1.0"
+edition = "2021"
+description = "The voice that says no before your coding agents say yes — seed, drill, premortem, spec in your terminal"
+license = "MIT"
+build = "build.rs"
+
+[[bin]]
+name = "naysay"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "stream"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+keyring = "3"
+ratatui = "0.29"
+crossterm = "0.28"
+toml = "0.8"
