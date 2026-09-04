@@ -1,6 +1,6 @@
 # naysay
 
-[![CI](https://github.com/<owner>/naysay/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/naysay/actions/workflows/ci.yml)
+[![CI](https://github.com/Exist-DireRaven/naysay/actions/workflows/ci.yml/badge.svg)](https://github.com/Exist-DireRaven/naysay/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/naysay.svg)](https://crates.io/crates/naysay)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -67,13 +67,13 @@ cargo install naysay
 ```
 
 **From a release** — grab a prebuilt binary (Windows / macOS / Linux)
-from the [Releases page](https://github.com/<owner>/naysay/releases),
+from the [Releases page](https://github.com/Exist-DireRaven/naysay/releases),
 unzip, put it on your `PATH`.
 
 **From source:**
 
 ```bash
-git clone https://github.com/<owner>/naysay && cd naysay
+git clone https://github.com/Exist-DireRaven/naysay && cd naysay
 cargo build --release
 # binary at target/release/naysay[.exe]
 ```
