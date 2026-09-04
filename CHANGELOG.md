@@ -10,7 +10,7 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ---
 
-## naysay v0.1 — 2026-09-04
+## naysay v0.1.0 — 2026-09-04
 
 First naysay release. Built on pair v1.3.
 
