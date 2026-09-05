@@ -171,6 +171,18 @@ pub(crate) fn save_decision_to(
         };
         let json = serde_json::to_string_pretty(&rec).map_err(std::io::Error::other)?;
         std::fs::write(&path, json)?;
+
+        // v0.7: assumptions enter the lifecycle registry; postmortems may
+        // flip their statuses. Registry failures must not lose the record
+        // — the record file is already safely on disk.
+        let source = format!("{}-{}", kind, id);
+        let registry_dir = dir.parent().unwrap_or(dir).to_path_buf();
+        if !rec.assumptions.is_empty() {
+            register_assumptions(&registry_dir, &source, rec.ts, &rec.assumptions)?;
+        }
+        if kind == "postmortem" {
+            apply_status_updates(&registry_dir, body)?;
+        }
         return Ok(id);
     }
     Err(std::io::Error::other(
@@ -520,11 +532,423 @@ pub(crate) fn run_d_relevant(idea: &str) -> Result<()> {
     Ok(())
 }
 
+// ─── v0.7 assumption registry + decision memory ────────────────────────────────────────
+
+/// One tracked assumption. The registry is the review's v0.7 data
+/// structure: claim + lifecycle + provenance. Claims are matched by
+/// normalized text (deterministic, no fuzzy matching, no LLM).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Assumption {
+    /// Normalized claim text (lowercase, whitespace collapsed) — the key.
+    pub claim: String,
+    /// Original claim text as first written.
+    pub display: String,
+    /// UNKNOWN | VALID | QUESTIONED | INVALIDATED
+    pub status: String,
+    /// First decision that introduced this assumption.
+    pub first_source: String,
+    /// Most recent decision that restated it.
+    pub last_source: String,
+    pub ts_first: u64,
+    pub ts_last: u64,
+    /// Optional note from `decisions verify`.
+    pub note: Option<String>,
+}
+
+/// The registry lives at `.naysay/assumptions.json` — one file, small
+/// corpus, atomic rewrite on change.
+fn assumptions_path(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.parent().unwrap_or(dir).join("assumptions.json")
+}
+
+fn load_registry(dir: &std::path::Path) -> Vec<Assumption> {
+    let path = assumptions_path(dir);
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn save_registry(dir: &std::path::Path, reg: &[Assumption]) -> std::io::Result<()> {
+    let path = assumptions_path(dir);
+    std::fs::create_dir_all(path.parent().unwrap_or(dir))?;
+    let json =
+        serde_json::to_string_pretty(reg).map_err(|e| std::io::Error::other(e.to_string()))?;
+    std::fs::write(path, json)
+}
+
+/// Normalize a claim for matching: lowercase, collapse whitespace, strip
+/// trailing punctuation. Two texts that normalize equal are the same
+/// assumption — everything else is a different assumption (no fuzzy).
+pub(crate) fn normalize_claim(s: &str) -> String {
+    let mut out = String::new();
+    let mut prev_space = true;
+    for ch in s
+        .trim()
+        .trim_end_matches(['.', '。', '!', '！', '?', '？'])
+        .chars()
+    {
+        let is_space = ch.is_whitespace();
+        if !is_space {
+            out.extend(ch.to_lowercase());
+        } else if !prev_space {
+            out.push(' ');
+        }
+        prev_space = is_space;
+    }
+    out.trim_end().to_string()
+}
+
+/// Register (or restate) the assumptions of a saved decision.
+pub(crate) fn register_assumptions(
+    dir: &std::path::Path,
+    source: &str,
+    ts: u64,
+    claims: &[String],
+) -> std::io::Result<()> {
+    if claims.is_empty() {
+        return Ok(());
+    }
+    let mut reg = load_registry(dir);
+    for claim in claims {
+        let key = normalize_claim(claim);
+        if key.is_empty() {
+            continue;
+        }
+        if let Some(a) = reg.iter_mut().find(|a| a.claim == key) {
+            a.last_source = source.to_string();
+            a.ts_last = ts;
+        } else {
+            reg.push(Assumption {
+                claim: key,
+                display: claim.trim().to_string(),
+                status: "UNKNOWN".into(),
+                first_source: source.to_string(),
+                last_source: source.to_string(),
+                ts_first: ts,
+                ts_last: ts,
+                note: None,
+            });
+        }
+    }
+    reg.sort_by(|a, b| a.ts_first.cmp(&b.ts_first));
+    save_registry(dir, &reg)
+}
+
+/// Apply status flips found in a postmortem body. Lines look like
+/// `ASSUMPTION VALID: <claim>` or `ASSUMPTION INVALIDATED: <claim>`.
+/// Only EXISTING registry entries flip; unknown claims are ignored (a
+/// postmortem cannot invent assumptions that premortems never made).
+/// Returns the number of statuses changed.
+pub(crate) fn apply_status_updates(dir: &std::path::Path, body: &str) -> std::io::Result<usize> {
+    let mut updates: Vec<(String, String)> = Vec::new();
+    for raw in body.lines() {
+        let upper = raw.to_uppercase();
+        if !upper.contains("ASSUMPTION") || !raw.contains(':') {
+            continue;
+        }
+        let status = if upper.contains("INVALIDATED") {
+            "INVALIDATED"
+        } else if upper.contains("VALID") {
+            "VALID"
+        } else if upper.contains("QUESTIONED") {
+            "QUESTIONED"
+        } else {
+            continue;
+        };
+        let Some((_, claim)) = raw.split_once(':') else {
+            continue;
+        };
+        let claim = claim.trim();
+        if claim.is_empty() {
+            continue;
+        }
+        updates.push((normalize_claim(claim), status.into()));
+    }
+    if updates.is_empty() {
+        return Ok(0);
+    }
+    let mut reg = load_registry(dir);
+    let mut changed = 0usize;
+    for a in reg.iter_mut() {
+        for (key, status) in &updates {
+            if a.claim == *key && a.status != *status {
+                a.status = status.clone();
+                changed += 1;
+            }
+        }
+    }
+    if changed > 0 {
+        save_registry(dir, &reg)?;
+    }
+    Ok(changed)
+}
+
+/// Manual status update by claim substring (`decisions verify`).
+pub(crate) fn verify_assumption(
+    dir: &std::path::Path,
+    claim_substr: &str,
+    status: &str,
+    note: Option<&str>,
+) -> std::io::Result<bool> {
+    let mut reg = load_registry(dir);
+    let mut found = false;
+    let norm_sub = normalize_claim(claim_substr);
+    for a in reg.iter_mut() {
+        if a.claim.contains(&norm_sub) || normalize_claim(&a.display).contains(&norm_sub) {
+            a.status = status.to_string();
+            a.note = note.map(|n| n.to_string());
+            found = true;
+        }
+    }
+    if found {
+        save_registry(dir, &reg)?;
+    }
+    Ok(found)
+}
+
+/// Assumption risk lines for the decision-memory context: registry
+/// entries whose claim overlaps the idea tokens, ranked, with status and
+/// unverified age. These are FACTS handed to the model.
+pub(crate) fn assumption_risk_lines(
+    dir: &std::path::Path,
+    idea: &str,
+    now: u64,
+    top: usize,
+) -> Vec<String> {
+    let reg = load_registry(dir);
+    if reg.is_empty() {
+        return Vec::new();
+    }
+    let q = tokenize(idea);
+    let day = 86_400u64;
+    let mut rows: Vec<(f64, &Assumption)> = reg
+        .iter()
+        .map(|a| (relevance_score(&q, &tokenize(&a.claim)), a))
+        .filter(|(s, _)| *s > 0.08)
+        .collect();
+    rows.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    rows.into_iter()
+        .take(top)
+        .map(|(_s, a)| {
+            let age = now.saturating_sub(a.ts_first) / day;
+            let verified = if a.status == "UNKNOWN" {
+                "never verified".into()
+            } else {
+                format!("status {}", a.status)
+            };
+            format!(
+                "  assumption [{} · first seen {}d ago · {}]: \"{}\"",
+                a.status, age, verified, a.display
+            )
+        })
+        .collect()
+}
+
+/// A relevant-record line for the decision-memory context.
+fn memory_row(rec: &DecisionRecord, now: u64) -> String {
+    let age = now.saturating_sub(rec.ts) / 86_400;
+    let verdict = rec.verdict.clone().unwrap_or_else(|| "not stated".into());
+    let conf = rec
+        .confidence
+        .map(|c| format!(" · confidence {}%", c))
+        .unwrap_or_default();
+    format!(
+        "- {}-{} ({}d ago) idea: \"{}\" VERDICT: {}{}",
+        rec.kind, rec.id, age, rec.idea, verdict, conf
+    )
+}
+
+/// The DECISION MEMORY block appended to premortem/spec prompts: prior
+/// verdicts on similar ideas + tracked assumptions with statuses. Empty
+/// when the store is empty or nothing is relevant — never a filler.
+pub(crate) fn memory_context_block(dir: &std::path::Path, idea: &str) -> Option<String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let q = tokenize(idea);
+    let records = load_all_records(dir);
+    if records.is_empty() {
+        return None;
+    }
+    let mut scored: Vec<(f64, &DecisionRecord)> = records
+        .iter()
+        .map(|r| {
+            let mut doc = r.idea.clone();
+            doc.push(' ');
+            doc.push_str(&r.body);
+            (relevance_score(&q, &tokenize(&doc)), r)
+        })
+        .filter(|(s, _)| *s > 0.12)
+        .collect();
+    if scored.is_empty() {
+        return None;
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut out = String::from(
+        "DECISION MEMORY — facts about your own prior verdicts on this or a similar idea. \
+         These are records of what was actually decided:\n",
+    );
+    for (score, r) in scored.iter().take(3) {
+        let age = now.saturating_sub(r.ts) / 86_400;
+        out.push_str(&format!(
+            "- {}-{} ({}d ago, relevance {:.2}) idea: \"{}\"\n",
+            r.kind, r.id, age, score, r.idea
+        ));
+        if let Some(v) = &r.verdict {
+            out.push_str(&format!("  prior VERDICT: {v}\n"));
+        }
+        for a in &r.assumptions {
+            out.push_str(&format!("  prior assumption: \"{a}\"\n"));
+        }
+        if let Some(o) = &r.outcome {
+            out.push_str(&format!("  known outcome: {o}\n"));
+        }
+    }
+
+    // Assumption lifecycle risks.
+    let risks = assumption_risk_lines(dir, idea, now, 5);
+    if !risks.is_empty() {
+        out.push_str("ASSUMPTION LIFECYCLE (status of tracked claims):\n");
+        for r in risks {
+            out.push_str(&r);
+            out.push('\n');
+        }
+    }
+
+    out.push_str(
+        "MEMORY RULES: prior verdicts are facts about what you decided. \
+         If a prior verdict was DON'T BUILD on substantially the same idea, do not \
+         silently reverse it — state explicitly what material fact has changed since \
+         that decision, and cite which assumption is now resolved. If nothing material \
+         changed, the verdict must be DON'T BUILD again. Assumptions with status \
+         UNKNOWN have never been verified — flag every unverified assumption this idea \
+         depends on as a decision risk. An INVALIDATED assumption overturns any plan \
+         built on it; a VALID one is evidence for it.",
+    );
+    Some(out)
+}
+
+fn load_all_records(dir: &std::path::Path) -> Vec<DecisionRecord> {
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        let mut paths: Vec<std::path::PathBuf> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            if let Ok(raw) = std::fs::read_to_string(&path) {
+                if let Ok(rec) = serde_json::from_str::<DecisionRecord>(&raw) {
+                    out.push(rec);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Convenience wrapper: memory context for the current idea from the
+/// cwd store. Missing dir / empty store -> None.
+pub(crate) fn memory_context(idea: &str) -> Option<String> {
+    let dir = decisions_dir().ok()?;
+    memory_context_block(&dir, idea)
+}
+
+/// Convenience wrapper: the parent decision's assumptions, formatted as
+/// the postmortem prompt's status-update checklist.
+pub(crate) fn parent_assumption_context(parent_id: &str) -> Option<String> {
+    let dir = decisions_dir().ok()?;
+    let rec = read_record_by_id(&dir, parent_id)?;
+    if rec.assumptions.is_empty() {
+        return None;
+    }
+    let mut out = format!(
+        "PARENT DECISION {}-{} assumptions — for each one the outcome actually tested, emit an `ASSUMPTION VALID:` or `ASSUMPTION INVALIDATED:` line:
+",
+        rec.kind, rec.id
+    );
+    for a in &rec.assumptions {
+        out.push_str(&format!(
+            "- \"{}\"
+",
+            a
+        ));
+    }
+    Some(out)
+}
+
+/// v0.7 query: list the assumption registry with lifecycle status.
+pub(crate) fn run_d_assumptions() -> Result<()> {
+    let dir = decisions_dir().context("decision store not accessible")?;
+    let reg = load_registry(&dir);
+    if reg.is_empty() {
+        println!("(no assumptions tracked yet — they register when premortems/specs save)");
+        return Ok(());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let day = 86_400u64;
+    let mut unknown = 0usize;
+    println!("tracked assumptions: {}", reg.len());
+    println!();
+    for a in &reg {
+        let age_first = now.saturating_sub(a.ts_first) / day;
+        let age_last = now.saturating_sub(a.ts_last) / day;
+        println!("[{:>11}] \"{}\"", a.status, a.display);
+        println!(
+            "    first: {}-{} ({}d ago) · last: {}-{} ({}d ago)",
+            a.first_source, a.ts_first, age_first, a.last_source, a.ts_last, age_last
+        );
+        if let Some(n) = &a.note {
+            println!("    note: {n}");
+        }
+        println!();
+        if a.status == "UNKNOWN" {
+            unknown += 1;
+        }
+    }
+    if unknown > 0 {
+        println!(
+            "\u{26a0} decision risk: {unknown} assumption(s) never verified — every plan built on them inherits that risk"
+        );
+    }
+    Ok(())
+}
+
+/// v0.7 query: manual status update by claim substring.
+pub(crate) fn run_d_verify(claim: &str, status: &str, note: Option<&str>) -> Result<()> {
+    let dir = decisions_dir().context("decision store not accessible")?;
+    let ok = verify_assumption(&dir, claim, status, note).context("update assumption registry")?;
+    if ok {
+        println!("\u{2713} assumption status set to {status}");
+    } else {
+        anyhow::bail!(
+            "no tracked assumption matches \"{claim}\" — see: naysay decisions assumptions"
+        );
+    }
+    Ok(())
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each test gets an isolated `.naysay/decisions` tree — the assumption
+    /// registry writes to the PARENT dir, so parallel tests must not share
+    /// one.
+    fn tmp_store(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("naysay-store-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        root.join(".naysay").join("decisions")
+    }
 
     #[test]
     fn extract_verdict_build_and_dont_build() {
@@ -575,6 +999,106 @@ mod tests {
         let s_none = relevance_score(&a, &none);
         assert!(s_partial > s_none);
         assert_eq!(s_none, 0.0);
+    }
+
+    // ─── assumption registry (v0.7) ─────────────────────────────────────────────
+
+    #[test]
+    fn normalize_claim_collapses_and_lowercases() {
+        assert_eq!(
+            normalize_claim("Users   will PAY $20/month."),
+            "users will pay $20/month"
+        );
+        assert_eq!(normalize_claim("  latency < 100ms!  "), "latency < 100ms");
+    }
+
+    #[test]
+    fn register_merges_by_normalized_claim() {
+        let dir = tmp_store("registry");
+        register_assumptions(
+            &dir,
+            "premortem-a",
+            1000,
+            &["Users will pay $20/month".into()],
+        )
+        .unwrap();
+        register_assumptions(&dir, "spec-b", 2000, &["users will pay $20/month".into()]).unwrap();
+        let reg = load_registry(&dir);
+        assert_eq!(reg.len(), 1, "same claim must merge, not duplicate");
+        assert_eq!(reg[0].first_source, "premortem-a");
+        assert_eq!(reg[0].last_source, "spec-b");
+        assert_eq!(reg[0].status, "UNKNOWN");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_status_updates_flips_existing_only() {
+        let dir = tmp_store("status");
+        register_assumptions(
+            &dir,
+            "premortem-a",
+            1000,
+            &["latency must be under 100ms".into()],
+        )
+        .unwrap();
+        let n = apply_status_updates(
+            &dir,
+            "OUTCOME: BUILT\nASSUMPTION VALID: latency must be under 100ms",
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+        let reg = load_registry(&dir);
+        assert_eq!(reg[0].status, "VALID");
+        // Unknown claims are ignored — a postmortem cannot invent assumptions.
+        let n = apply_status_updates(&dir, "ASSUMPTION INVALIDATED: never-seen claim").unwrap();
+        assert_eq!(n, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn memory_context_appears_only_when_relevant() {
+        let dir = tmp_store("memctx");
+        let body = "VERDICT: DON'T BUILD\nASSUMPTIONS:\n- users will pay $20/month";
+        let id = save_decision_to(
+            &dir,
+            "premortem",
+            "paid local-first deployment",
+            body,
+            None,
+            1_000_000_000,
+        )
+        .unwrap();
+        // 高相关查询 → 上下文包含 verdict + 记忆规则
+        let ctx = memory_context_block(&dir, "paid local-first deployment tool").expect("relevant");
+        assert!(ctx.contains("DECISION MEMORY"));
+        assert!(ctx.contains("DON'T BUILD"));
+        assert!(ctx.contains("never been verified"));
+        assert!(ctx.contains("must be DON'T BUILD again"));
+        // 不相关查询 → None
+        assert!(memory_context_block(&dir, "recipe for soup").is_none());
+        let _ =
+            std::fs::remove_dir_all(&dir.parent().unwrap().to_path_buf().join("assumptions.json"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = id;
+    }
+
+    #[test]
+    fn assumption_risk_lines_report_status_and_age() {
+        let dir = tmp_store("risk");
+        register_assumptions(
+            &dir,
+            "premortem-a",
+            1_000_000_000,
+            &["users will adopt the cli workflow".into()],
+        )
+        .unwrap();
+        let now = 1_000_000_000 + 3 * 86_400; // 3 days later
+        let lines = assumption_risk_lines(&dir, "the cli workflow adoption", now, 5);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("UNKNOWN"), "{:?}", lines);
+        assert!(lines[0].contains("3d ago"), "{:?}", lines);
+        assert!(lines[0].contains("never verified"), "{:?}", lines);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

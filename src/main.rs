@@ -156,6 +156,15 @@ enum DecisionsAction {
         /// The idea to compare against the store
         idea: String,
     },
+    /// List tracked assumptions with lifecycle status
+    Assumptions,
+    /// Update an assumption's lifecycle status by claim substring
+    Verify {
+        /// Claim substring to match
+        claim: String,
+        /// New status: VALID | QUESTIONED | INVALIDATED
+        status: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -757,6 +766,8 @@ async fn main() -> Result<()> {
             DecisionsAction::Link { child } => store::run_d_link(&child),
             DecisionsAction::Unknowns => store::run_d_unknowns(),
             DecisionsAction::Relevant { idea } => store::run_d_relevant(&idea),
+            DecisionsAction::Assumptions => store::run_d_assumptions(),
+            DecisionsAction::Verify { claim, status } => store::run_d_verify(&claim, &status, None),
         },
         Some(Command::Calibration) => store::run_calibration(),
         Some(Command::Doctor) => doctor().await,
@@ -1150,6 +1161,10 @@ async fn premortem(
 
          Be specific to this idea. Generic startup advice is worthless here."
     );
+    let prompt = match store::memory_context(idea) {
+        Some(block) => format!("{prompt}\n\n{block}"),
+        None => prompt,
+    };
 
     let content = call_llm(&prompt, history, 1500, 0.6).await?;
     note_usage_stderr();
@@ -1209,6 +1224,10 @@ async fn spec(
 
          Be concrete. A vague spec means the agent improvises, and          improvisation is where rework is born."
     );
+    let prompt = match store::memory_context(idea) {
+        Some(block) => format!("{prompt}\n\n{block}"),
+        None => prompt,
+    };
 
     let content = call_llm(&prompt, history, 2000, 0.4).await?;
     note_usage_stderr();
@@ -1279,8 +1298,13 @@ async fn postmortem(
          happened, what to do differently next time.\n\n\
          After the postmortem, add a short CALIBRATION section. Its first          line must be exactly one of: `OUTCOME: BUILT`, `OUTCOME: KILLED`,          `OUTCOME: ABANDONED`, `OUTCOME: UNKNOWN`.\n\n\
          CALIBRATION — if a premortem was run for this project, did the          verdict hold? If you said BUILD and it was killed, or KILL and          it shipped, that is the most useful sentence in this whole          document. One paragraph: what was the original confidence,          what actually happened, and what the gap teaches about the          premortem process itself. If no premortem exists, name two          things you would have warned against that the project proved          right about.\n\n\
+         ASSUMPTION STATUS UPDATE — the PARENT DECISION assumptions listed          below (if any) were the premortem's claims. For each one the          outcome actually tested, end the output with exactly one line:          `ASSUMPTION VALID: <claim>` or `ASSUMPTION INVALIDATED: <claim>`.          If the outcome did not test an assumption, emit nothing for it.\n\n\
          Be specific to this project. Blame decisions, not people."
     );
+    let prompt = match parent.and_then(store::parent_assumption_context) {
+        Some(block) => format!("{prompt}\n\n{block}"),
+        None => prompt,
+    };
 
     let content = call_llm(&prompt, history, 1500, 0.5).await?;
     note_usage_stderr();
@@ -1672,6 +1696,10 @@ async fn dispatch_repl(line: &str, st: &mut ReplState) -> Result<ReplAction> {
         }
         "d-relevant" => {
             store::run_d_relevant(rest).map_err(|e| anyhow::anyhow!("{e:#}"))?;
+            Ok(ReplAction::Continue)
+        }
+        "d-assumptions" => {
+            store::run_d_assumptions().map_err(|e| anyhow::anyhow!("{e:#}"))?;
             Ok(ReplAction::Continue)
         }
         "calibration" => {

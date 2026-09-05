@@ -12,7 +12,7 @@ This file is part of the codebase. If you change the rules, change this file.
 Companion to `DECISIONS.md` (which answers "why?"). This answers
 "what?".
 
-Codebase at v0.5.0: ~5300 lines across `src/main.rs` + `src/tui.rs` + `src/store.rs`.
+Codebase at v0.7.0: ~6700 lines across `src/main.rs` + `src/tui.rs` + `src/store.rs`.
 If you can read all three files end-to-end with this map in hand, you own the
 tool. If you can't, that's the part to study next.
 
@@ -225,6 +225,10 @@ tool. If you can't, that's the part to study next.
 | symbol | what it does |
 |--------|--------------|
 | `render` | Draws the two-row live strip: ASCII `> ` prompt + dim status row. The input TEXT is printed natively after draw — ratatui never renders wide chars on the live path. |
+| `Assumption` / `load_registry` / `save_registry` / `register_assumptions` / `apply_status_updates` / `verify_assumption` / `assumptions_path` | v0.7 assumption lifecycle: registry at `.naysay/assumptions.json`, claims normalized (lowercase + whitespace collapse), statuses UNKNOWN/VALID/QUESTIONED/INVALIDATED. Postmortems flip via `ASSUMPTION VALID|INVALIDATED:` lines; `decisions verify` flips manually. |
+| `memory_context` / `memory_context_block` / `assumption_risk_lines` | The DECISION MEMORY block injected into premortem/spec prompts: top-3 relevant prior verdicts + tracked-assumption risk lines + MEMORY RULES (a prior DON'T BUILD must be justified or repeated). |
+| `parent_assumption_context` | The parent premortem's assumptions formatted as the postmortem's status-update checklist. |
+| `status_text` | The dim status line text (busy/idle/typing), extracted pure for testing. |
 | `flush_pending` | Two-phase print: ratatui `insert_before` reserves blank rows above the viewport (owns scrolling), then each pre-wrapped row prints as ONE contiguous crossterm `Print` with span colors — wide chars render natively, no follower-space gaps. In-flight streaming entry flushes on its `Result` event. |
 | `line_height` | Estimated wrapped row count of a Line at a given width (display_width-based, so CJK wraps on the same accounting terminals use). Drives insert heights. |
 | `entry_to_lines` | One `HistoryEntry` → `Vec<Line<'_>>` for the scrollback transcript. User turns as `> cmd`, AI turns verbatim with verdict lines in red, errors prefixed `!`, info dim. |

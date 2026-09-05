@@ -6,7 +6,9 @@
 **naysay 问：你到底该不该做它？**
 
 *A decision layer between human intent and agent execution.*
+*naysay remembers what you decided — and asks whether it is still true.*
 *人类意图与 agent 执行之间的决策层。*
+**naysay 记住你做过的决定——并追问它们今天还成立吗。**
 
 [English](#english) · [中文](#中文)
 
@@ -224,9 +226,11 @@ you want in.
 The tool runs on itself. Current state, queryable in this repo:
 
 ```
-logged decisions   : 23 (DECISIONS.md D-001 … D-023)
+logged decisions   : 26 (DECISIONS.md D-001 … D-026)
 kill cases         : 2 published (examples/) — incl. this tool's predecessor
 survivor           : the tool you are reading
+assumption registry: live (UNKNOWN → VALID/INVALIDATED lifecycle)
+memory injection   : premortem/spec prompts carry prior verdicts + risks
 calibration        : naysay calibration   (once real loops exist)
 ```
 

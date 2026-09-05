@@ -678,3 +678,44 @@ the terminal, not what the text is:
 - Tests cover the pure helpers (`input_window`, cursor editing via
   `handle_key` simulation, wrap rows); the terminal output itself is
   verified by smoke runs, not unit tests.
+
+## D-025 · Assumption lifecycle registry (v0.7) (2026-09-05)
+
+**Decision:** Assumptions become first-class tracked entities with a
+lifecycle (UNKNOWN → VALID/QUESTIONED/INVALIDATED), stored in
+`.naysay/assumptions.json`, matched by normalized claim text. The
+postmortem can flip statuses (via structured `ASSUMPTION VALID|INVALIDATED:`
+lines in its output); `decisions assumptions` lists the registry with
+unverified-age warnings; `decisions verify` flips manually.
+
+**Why:** the second review's sharpest point — "Decision Memory is an
+Archive" — is fixed not by smarter search but by giving the smallest
+unit of a decision (the assumption) a lifecycle. "You are building on
+an assumption first seen 19 days ago and never verified" is a sentence
+no coding agent says today.
+
+**Trade-offs:** claim matching is deterministic (normalized text), so
+rephrased assumptions create separate entries — accepted, because fuzzy
+matching hallucinate-merges distinct claims. Entries are created only
+by premortem/spec (facts about what was assumed) and flipped only by
+postmortems or explicit user command.
+
+## D-026 · Decision memory injection into prompts (v0.7) (2026-09-05)
+
+**Decision:** premortem and spec prompts now carry a `DECISION MEMORY`
+block — prior verdicts on similar ideas (deterministic Jaccard
+retrieval, top 3) plus tracked-assumption risk lines — and MEMORY RULES
+that make the model treat prior verdicts as facts: a prior DON'T BUILD
+on the same idea must be either justified by a material change or
+repeated. postmortem prompts carry the parent premortem's assumptions
+with instructions to emit structured status updates.
+
+**Why:** this is the review's S1/S2/S4 made concrete. S1: history can
+change the verdict because the model is instructed to treat a prior
+DON'T BUILD as binding unless something material changed. S2: conflicts
+surface with what/why/what-would-resolve structure. S4: a postmortem's
+status flips are visible to the next premortem through the registry.
+
+**Trade-offs:** the injected block costs tokens (bounded: top 3 records
++ top 5 assumptions). The memory rules bias the model toward repeating
+prior kills — deliberate: the burden of proof belongs to the builder.

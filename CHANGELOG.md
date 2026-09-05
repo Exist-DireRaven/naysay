@@ -16,6 +16,50 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.7.0 — 2026-09-05
+
+**naysay remembers what you decided — and asks whether it is still
+true.** The archive becomes an engine: past decisions now enter the
+prompt, carry lifecycle, and can overturn present plans. Shaped by the
+second external review's v0.7 spec (D-023) and logged as D-025/D-026.
+
+#### Added
+
+- **Assumption lifecycle registry** (`.naysay/assumptions.json`) —
+  every assumption a premortem/spec emits is tracked: normalized claim,
+  status (UNKNOWN/VALID/QUESTIONED/INVALIDATED), first/last decision,
+  optional note. Deterministic matching (normalized text), deterministic
+  transitions (postmortem outcomes or explicit `decisions verify`).
+- **Decision memory in prompts** — premortem and spec prompts now carry
+  a `DECISION MEMORY` block: prior verdicts on similar ideas
+  (deterministic retrieval, top 3) with assumption statuses, plus
+  MEMORY RULES: a prior DON'T BUILD on the same idea must be either
+  justified by a material change or repeated.
+- **Postmortem assumption updates** — with `--parent`, the prompt lists
+  the parent premortem's assumptions and instructs the model to emit
+  `ASSUMPTION VALID|INVALIDATED: <claim>` lines; the registry flips
+  accordingly (existing entries only — postmortems cannot invent
+  assumptions).
+- **`naysay decisions assumptions`** — the registry listing, with an
+  explicit unverified-assumption risk warning.
+- **`naysay decisions verify <claim> <STATUS>`** — manual lifecycle
+  flip with optional note.
+- **`decisions relevant` conflict annotation** — rows whose prior
+  verdict was DON'T BUILD are flagged as repeats requiring
+  justification.
+- **8 unit tests** — normalize/merge, status flips (existing-only),
+  memory-context relevance gating, risk lines with status/age,
+  postmortem update application. Total: 85.
+
+#### Notes
+
+- No new commands beyond `decisions assumptions|verify`; the engine
+  works through the EXISTING premortem/spec/postmortem surface (D-026).
+- No vector DB, no MCP, no Web UI (D-019/D-023 rejections stand).
+- LOC: main.rs ~3150, tui.rs ~2840, store.rs ~870 — all inside the
+  guardrail.
+
+---
 ### naysay v0.6.1 — 2026-09-05
 
 #### Added
@@ -391,6 +435,46 @@ First naysay release. Built on pair v1.3.
 
 ## 中文
 
+### naysay v0.7.0 — 2026-09-05
+
+**naysay 记住你做过的决定——并追问它们今天还成立吗。** 档案变成
+引擎：过去的决策进入 prompt、带上生命周期、能够推翻当前计划。
+形状来自对 v0.4 的第二次外部审评的 v0.7 规格(D-023)，入档为
+D-025/D-026。
+
+#### 新增
+
+- **假设生命周期注册表** (`.naysay/assumptions.json`) —
+  premortem/spec 产出的每条假设都被追踪：规范化 claim、状态
+  (UNKNOWN/VALID/QUESTIONED/INVALIDATED)、首次/最近决策、可选备注。
+  确定性匹配(规范化文本)、确定性翻转(postmortem 结果或显式
+  `decisions verify`)。
+- **prompt 注入决策记忆** — premortem 和 spec 的 prompt 现在携带
+  `DECISION MEMORY` 块：相似想法的历史判决(确定性检索，前 3 条)
+  及假设状态，外加 MEMORY RULES：同一想法历史上的 DON'T BUILD
+  必须被"什么实质变了"证明，否则重复 DON'T BUILD。
+- **postmortem 假设状态更新** — 带 `--parent` 时，prompt 列出父
+  premortem 的假设并指示模型输出 `ASSUMPTION VALID|INVALIDATED:
+  <claim>` 行；注册表相应翻转(仅限已存在条目——postmortem 不能
+  凭空发明假设)。
+- **`naysay decisions assumptions`** — 注册表清单，带未验证假设的
+  风险警告。
+- **`naysay decisions verify <claim> <STATUS>`** — 手动生命周期
+  翻转，可带备注。
+- **`decisions relevant` 冲突注记** — 历史 verdict 为 DON'T BUILD
+  的行被标记为"重复需要论证"。
+- **8 个单元测试** — 规范化/合并、状态翻转(仅限已存在)、记忆
+  上下文相关性门控、风险行状态/年龄、postmortem 更新应用。
+  总数:85。
+
+#### 备注
+
+- 除 `decisions assumptions|verify` 外无新命令——引擎通过既有的
+  premortem/spec/postmortem 表面工作(D-026)。
+- 无 vector DB、无 MCP、无 Web UI(D-019/D-023 的拒绝依然成立)。
+- LOC：main.rs ~3150，tui.rs ~2840，store.rs ~870——都在警戒线内。
+
+---
 ### naysay v0.6.1 — 2026-09-05
 
 #### 新增
