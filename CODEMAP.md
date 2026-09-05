@@ -1,5 +1,14 @@
 # CODEMAP — what every function does
 
+# CODEMAP — 每个函数做什么
+
+English-only by design — same audience rationale as DECISIONS.md. The README is the bilingual entry point.
+
+This file is part of the codebase. If you change the rules, change this file.
+本文件是代码库的一部分。规则若改,本文件随之改。
+
+
+
 Companion to `DECISIONS.md` (which answers "why?"). This answers
 "what?".
 

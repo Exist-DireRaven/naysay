@@ -1,5 +1,14 @@
 # DECISIONS — the design log
 
+# DECISIONS — 设计日志
+
+English-only by design — the design log is read mostly by humans (and the occasional agent) who already work in code; English keeps the audience widest. The README and other user-facing docs are bilingual.
+
+This file is part of the codebase. If you change the rules, change this file.
+本文件是代码库的一部分。规则若改,本文件随之改。
+
+
+
 This file is the audit trail. Every non-obvious choice in naysay is here,
 with the reasoning captured at the time it was made. Future maintainers
 (including me, three months from now) can read this and know *why* the

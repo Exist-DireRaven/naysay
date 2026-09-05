@@ -1,5 +1,14 @@
 # AGENTS.md — rules for AI agents working on naysay
 
+# AGENTS.md — 协作 AI agent 的规则
+
+English-only by design — agents read these rules before writing code; English keeps the rules readable to the largest set of agents. The README is the bilingual entry point.
+
+This file is part of the codebase. If you change the rules, change this file.
+本文件是代码库的一部分。规则若改,本文件随之改。
+
+
+
 This file is read by every AI agent (ZCode, Claude Code, Codex, …) that
 helps maintain naysay. It is the contract between the human owner and
 the agent. Read this before doing anything.

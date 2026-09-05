@@ -98,6 +98,98 @@ fn debug_log(msg: &str) {
     }
 }
 
+// ─── UI text (canonical, English) ─────────────────────────────────────────────────────
+
+/// Every product string the user sees lives here. Centralizing makes the
+/// surface auditable, swappable for translation, and prevents typos from
+/// slipping past code review. Conventions:
+/// * One constant per user-visible sentence, not per word.
+/// * `:` and `·` are part of the brand voice — keep them.
+/// * Status / banner / help lines are English by design; the rest of the
+///   surface is fully bilingual (README, prompts.toml, error hints).
+mod ui_text {
+    pub const BANNER_HEADER: &str = "naysay v0.1.0  ·  model: {model}  ·  provider: {host}";
+    pub const BANNER_INTRO: &str =
+        "type a command, or anything for freeform. verdict family first:";
+    pub const BANNER_VERDICT: &str =
+        "  verdict    premortem <idea> | spec <idea> | postmortem <idea>";
+    pub const BANNER_GENERATION: &str = "  generation angles | questions | contrarian | use-cases";
+    pub const BANNER_ANALYSIS: &str = "  analysis   pros | cons | risks | steps | examples";
+    pub const BANNER_READING: &str = "  reading    explain <file>  |  summarize <file>";
+    pub const BANNER_SESSION: &str =
+        "  session    /context N | /model <name> | /resume | /clear | Ctrl+S | r | Tab";
+    pub const BANNER_HELP: &str = "  help       show all commands";
+    pub const BANNER_LOGGING: &str = "  session    logging to {path}";
+    pub const BANNER_QUIT: &str = "  Esc / Ctrl+C     quit";
+    pub const BANNER_RESUME: &str =
+        "[ok] resumed {n} turns from {path} — new turns append to the same session";
+    pub const RESUME_FAILED: &str = "resume failed: {err}";
+    pub const SESSION_LOGS: &str = "logging to {path}"; // REPL boot echo
+
+    pub const TAB_NO_MATCH: &str = "no command starts with '{prefix}'";
+    pub const TAB_CYCLE: &str = "{n} options — Tab again to cycle";
+
+    pub const STATUS_BUSY: &str = "thinking [{kind}]…";
+    pub const STATUS_READY: &str = "ready ({secs}s{tok})";
+    pub const STATUS_READY_BUSY: &str = "{spinner} thinking · {chars} chars · esc quits";
+    pub const STATUS_READY_IDLE: &str =
+        "{status} · verdict: premortem/spec/postmortem · ctrl+up/down history · tab · esc";
+    pub const STATUS_READY_TYPING: &str = "{status} · tab completes · enter sends";
+
+    pub const HELP: &str = "generation ─────────────────────────────────────
+  angles <topic>         angles you haven't considered
+  questions <topic>      deep questions to ask
+  contrarian <claim>     steelman the opposite
+  use-cases <thing>      concrete user scenarios
+
+verdict ─────────────────────────────────────────
+  premortem <idea>       assume it died in 6 months
+  spec <idea>            spec for your coding agent
+  postmortem <idea>      it's over — review + decision-log
+
+reading ─────────────────────────────────────────
+  explain <file>         code walkthrough
+  summarize <file>       brief overview
+
+session ─────────────────────────────────────────
+  /context N             set prior turns to remember (now {n})
+  /model <name>          switch LLM (now {m})
+  /resume [file]         replay a past session into context
+  /clear                 wipe history pane
+  Ctrl+S                 save conversation to markdown
+  r                      regenerate last command
+  Tab                    complete command name
+
+the AI sees your last N turns, so you can ask follow-ups like
+\"what about X?\" or \"expand that\". any text that isn't a command
+goes to freeform.
+seed = angles alias. drill = pros alias.
+@<path> inlines a file or directory (budgeted) into the prompt.
+prompts editable in <data_dir>/prompts.toml";
+
+    pub const CLEARED: &str =
+        "[ok] cleared {n} remembered entries (the transcript above stays in scrollback)";
+    pub const WAIT_RESUME: &str = "wait for the current call to finish, then /resume";
+    pub const RESUME_NONE: &str = "no session found to resume (start one first)";
+    pub const REGEN_INFO: &str = "[↻] regenerating: {cmd}";
+    pub const EXPORTED: &str = "[ok] exported conversation to {path}";
+    pub const EXPORT_FAILED: &str = "export failed: {err}";
+
+    pub const HELP_LEAD: &str = "commands:";
+    pub const HELP_LINE: &str = "  {name:<20}{desc}";
+    pub const INPUT_PROMPT: &str = " naysay ❯ ";
+    pub const PROMPT_TPL: &str = "naysay> ";
+    pub const REPL_INTRO: &str = "naysay — the voice that says no first";
+    pub const REPL_TAIL: &str = "type `help` for commands, `quit` to exit";
+
+    // Markdown export header (kept here so the transcript stays consistent).
+    pub const EXPORT_TITLE: &str = "# naysay conversation\n";
+    pub const EXPORT_TS_TAG: &str = "_exported at epoch {ts}_\n";
+    pub const EXPORT_USER_HEAD: &str = "**you**\n";
+    pub const EXPORT_AI_HEAD: &str = "**naysay**\n";
+    pub const EXPORT_ERR_HEAD: &str = "> ⚠ {err}\n";
+}
+
 // ─── Windows console control handler ──────────────────────────────────────────────────
 
 /// Set when the user presses Ctrl+C (or Ctrl+Break). The render loop polls
@@ -109,7 +201,6 @@ static CTRL_C_PRESSED: AtomicBool = AtomicBool::new(false);
 mod win_console {
     use super::CTRL_C_PRESSED;
     use std::sync::atomic::Ordering;
-
     /// Console control handler. Returning 1 (= TRUE) tells Windows we
     /// handled the event and the process should NOT be terminated.
     unsafe extern "system" fn handler(ctrl_type: u32) -> i32 {
@@ -192,41 +283,30 @@ pub async fn run(
 
     // First-launch: two sober lines. The header carries version + provider;
     // the menu lists the verdict family prominently because that is the brand.
-    state.history.push(HistoryEntry::Info(format!(
-        "naysay v0.1  ·  model: {}  ·  provider: {}",
-        state.model,
-        endpoint_host(&config().chat_url),
-    )));
-    state.history.push(HistoryEntry::Info(
-        "type a command, or anything for freeform. verdict family first:".into(),
-    ));
-    state.history.push(HistoryEntry::Info(
-        "  verdict    premortem <idea> | spec <idea> | postmortem <idea>".into(),
-    ));
-    state.history.push(HistoryEntry::Info(
-        "  generation angles | questions | contrarian | use-cases".into(),
-    ));
-    state.history.push(HistoryEntry::Info(
-        "  analysis   pros | cons | risks | steps | examples".into(),
-    ));
-    state.history.push(HistoryEntry::Info(
-        "  reading    explain <file>  |  summarize <file>".into(),
-    ));
-    state.history.push(HistoryEntry::Info(
-        "  session    /context N | /model <name> | /resume | /clear | Ctrl+S | r | Tab".into(),
-    ));
-    state
-        .history
-        .push(HistoryEntry::Info("  help       show all commands".into()));
+    let host = endpoint_host(&config().chat_url);
+    let banner = [
+        ui_text::BANNER_HEADER
+            .replace("{model}", &state.model)
+            .replace("{host}", &host),
+        ui_text::BANNER_INTRO.to_string(),
+        ui_text::BANNER_VERDICT.to_string(),
+        ui_text::BANNER_GENERATION.to_string(),
+        ui_text::BANNER_ANALYSIS.to_string(),
+        ui_text::BANNER_READING.to_string(),
+        ui_text::BANNER_SESSION.to_string(),
+        ui_text::BANNER_HELP.to_string(),
+    ];
+    for line in banner {
+        state.history.push(HistoryEntry::Info(line));
+    }
     if let Some(ref p) = state.session_path {
-        state.history.push(HistoryEntry::Info(format!(
-            "  session    logging to {}",
-            p.display()
-        )));
+        state.history.push(HistoryEntry::Info(
+            ui_text::BANNER_LOGGING.replace("{path}", &p.display().to_string()),
+        ));
     }
     state
         .history
-        .push(HistoryEntry::Info("  Esc / Ctrl+C     quit".into()));
+        .push(HistoryEntry::Info(ui_text::BANNER_QUIT.to_string()));
 
     // --continue: replay the resumed session's turns into the transcript.
     // build_context picks them up as ordinary pairs, so the model remembers
@@ -250,10 +330,11 @@ pub async fn run(
                     let excess = state.input_history.len() - 100;
                     state.input_history.drain(..excess);
                 }
-                state.history.push(HistoryEntry::Info(format!(
-                    "[ok] resumed {resumed_turns} turns from {} — new turns append to the same session",
-                    path.display()
-                )));
+                state.history.push(HistoryEntry::Info(
+                    ui_text::BANNER_RESUME
+                        .replace("{n}", &resumed_turns.to_string())
+                        .replace("{path}", &path.display().to_string()),
+                ));
             }
             Err(e) => {
                 state
@@ -382,9 +463,9 @@ pub async fn run(
                                     )));
                                 }
                                 Err(e) => {
-                                    state
-                                        .history
-                                        .push(HistoryEntry::Error(format!("export failed: {e}")));
+                                    state.history.push(HistoryEntry::Error(
+                                        ui_text::EXPORT_FAILED.replace("{err}", &format!("{e}")),
+                                    ));
                                 }
                             },
                             KeyAction::Regenerate => {
@@ -532,7 +613,7 @@ fn apply_completion(input: &mut String, state: &mut TuiState) {
     match candidates.len() {
         0 => {
             // No match. Leave input alone, leave a hint in status.
-            state.status = format!("no command starts with '{prefix}'");
+            state.status = ui_text::TAB_NO_MATCH.replace("{prefix}", &prefix);
         }
         1 => {
             // Single match — fill it in and clear cycling state.
@@ -558,7 +639,7 @@ fn apply_completion(input: &mut String, state: &mut TuiState) {
                     candidates: candidates.clone(),
                     cursor: 0,
                 };
-                state.status = format!("{} options — Tab again to cycle", candidates.len());
+                state.status = ui_text::TAB_CYCLE.replace("{n}", &candidates.len().to_string());
             } else {
                 // Same length prefix — cycle.
                 let next = &candidates[0];
@@ -899,9 +980,9 @@ fn submit_line(
         state.flushed = 0;
         state.last_command = None;
         state.streaming = None;
-        state.history.push(HistoryEntry::Info(format!(
-            "[ok] cleared {dropped} remembered entries (the transcript above stays in scrollback)"
-        )));
+        state.history.push(HistoryEntry::Info(
+            ui_text::CLEARED.replace("{n}", &dropped.to_string()),
+        ));
         return;
     }
 
@@ -929,9 +1010,9 @@ fn submit_line(
     // resumed file so the session stays in one piece.
     if cmd == "/resume" || cmd == ":resume" {
         if state.busy {
-            state.history.push(HistoryEntry::Error(
-                "wait for the current call to finish, then /resume".into(),
-            ));
+            state
+                .history
+                .push(HistoryEntry::Error(ui_text::WAIT_RESUME.into()));
             return;
         }
         let target = if rest.is_empty() {
@@ -940,9 +1021,9 @@ fn submit_line(
             crate::resolve_session_arg(rest).ok()
         };
         let Some(path) = target else {
-            state.history.push(HistoryEntry::Error(
-                "no session found to resume (start one first)".into(),
-            ));
+            state
+                .history
+                .push(HistoryEntry::Error(ui_text::RESUME_NONE.into()));
             return;
         };
         match crate::load_session_records(&path) {
@@ -1050,7 +1131,7 @@ fn submit_line(
     state.busy = true;
     state.streaming = None;
     state.calls = state.calls.wrapping_add(1);
-    state.status = format!("thinking [{kind}]...");
+    state.status = ui_text::STATUS_BUSY.replace("{kind}", kind);
 
     play_sound(SoundKind::Submit, sound_enabled);
 
@@ -1681,13 +1762,13 @@ fn export_conversation(history: &[HistoryEntry]) -> std::io::Result<std::path::P
         match entry {
             HistoryEntry::Info(_) => {} // skip boot lines, focus on dialog
             HistoryEntry::User(s) => {
-                writeln!(f, "**you**\n\n{s}\n")?;
+                writeln!(f, "{}\n\n{s}\n", ui_text::EXPORT_USER_HEAD)?;
             }
             HistoryEntry::Ai(s) => {
-                writeln!(f, "**naysay**\n\n{s}\n")?;
+                writeln!(f, "{}\n\n{s}\n", ui_text::EXPORT_AI_HEAD)?;
             }
             HistoryEntry::Error(s) => {
-                writeln!(f, "> ⚠ {s}\n")?;
+                writeln!(f, "{}", ui_text::EXPORT_ERR_HEAD.replace("{err}", s))?;
             }
         }
     }
@@ -2008,7 +2089,9 @@ fn apply_event(state: &mut TuiState, evt: TuiEvent, sound_enabled: bool) {
             let tok = usage
                 .map(|u| format!(" · {} tok", u.total()))
                 .unwrap_or_default();
-            state.status = format!("ready ({secs:.1}s{tok})");
+            state.status = ui_text::STATUS_READY
+                .replace("{secs}", &format!("{secs:.1}"))
+                .replace("{tok}", &tok);
             // The Ai entry is already in history (filled via Delta chunks);
             // we don't push a duplicate here.
             if let Some(ref p) = state.session_path {
@@ -2085,25 +2168,23 @@ fn render(f: &mut ratatui::Frame, state: &TuiState, input: &str) {
                 _ => String::new(),
             })
             .unwrap_or_default();
-        format!("{spinner} thinking · {chars} chars · esc quits")
+        ui_text::STATUS_READY_BUSY
+            .replace("{spinner}", spinner)
+            .replace("{chars}", &chars)
     } else if input.is_empty() {
-        format!(
-            "{} · verdict: premortem/spec/postmortem · ctrl+up/down history · tab · esc",
-            if state.status.is_empty() {
-                "ready"
-            } else {
-                &state.status
-            },
-        )
+        let s = if state.status.is_empty() {
+            "ready"
+        } else {
+            &state.status
+        };
+        ui_text::STATUS_READY_IDLE.replace("{status}", s)
     } else {
-        format!(
-            "{} · tab completes · enter sends",
-            if state.status.is_empty() {
-                "ready"
-            } else {
-                &state.status
-            },
-        )
+        let s = if state.status.is_empty() {
+            "ready"
+        } else {
+            &state.status
+        };
+        ui_text::STATUS_READY_TYPING.replace("{status}", s)
     };
     let status_line = Line::from(Span::styled(
         format!(" {status_text}"),
