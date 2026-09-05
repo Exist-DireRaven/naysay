@@ -16,6 +16,41 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.4.0 — 2026-09-05
+
+Interactive provider picker at first run. No new commands, no new
+flags, no new dependencies — presets are data, not abstraction
+(D-022).
+
+#### Added
+
+- **First-run provider picker** — the setup box now offers seven
+  paths: Ollama (local, free, no key), DeepSeek, GLM (Zhipu),
+  OpenAI, MiniMax, OpenRouter (also carries Claude models), and
+  Custom (any OpenAI-compatible endpoint). The choice is written to
+  `naysay.toml`, the key goes to the OS keyring, and the TUI
+  launches against the chosen provider. Existing users with a key
+  skip it entirely.
+- **Claude honesty note** — the picker states plainly that
+  Anthropic's API is not OpenAI-compatible and routes Claude usage
+  through OpenRouter.
+- **6 unit tests** — choice parsing, preset well-formedness (URL
+  scheme, model, env name, key-only-for-remote rule), TOML
+  roundtrip through `Config::parse_strict` + `validate`, banner
+  alignment across version lengths. Total: 65.
+
+#### Fixed
+
+- **Stale version banner.** The first-run setup box kept saying
+  `naysay v0.1` through four releases because the version was
+  hand-written in three places. Every banner now derives from
+  `CARGO_PKG_VERSION` at compile time (`crate::VERSION`), and the
+  setup box computes its padding so future version strings of any
+  length stay frame-aligned. Found by a user asking exactly the
+  right question: "why does 0.3 still say v0.1?"
+
+---
+
 ### naysay v0.3.1 — 2026-09-05
 
 #### Fixed
@@ -235,6 +270,34 @@ First naysay release. Built on pair v1.3.
 <a id="中文"></a>
 
 ## 中文
+
+### naysay v0.4.0 — 2026-09-05
+
+首次运行变成交互式 provider 选择器。无新命令、无新 flag、无新依赖
+——presets 是数据,不是抽象(D-022)。
+
+#### 新增
+
+- **首启 provider 选择器** — setup 框现在提供七条路:Ollama(本地、
+  免费、免 key)、DeepSeek、GLM(智谱)、OpenAI、MiniMax、OpenRouter
+  (也承载 Claude 模型)、Custom(任意 OpenAI 兼容端点)。选择写入
+  `naysay.toml`,key 进系统 keyring,TUI 直接以所选 provider 启动。
+  已有 key 的老用户完全跳过。
+- **Claude 诚实注记** — 选择器明说 Anthropic 的 API 不是 OpenAI
+  兼容格式,Claude 用法指向 OpenRouter。
+- **6 个单元测试** — 选项解析、preset 合规(URL scheme、model、
+  env 名、key 仅限远程规则)、TOML 经 `Config::parse_strict` +
+  `validate` 回环、banner 跨版本长度对齐。总数:65。
+
+#### 修复
+
+- **版本横幅过期。** 首启 setup 框连着四个版本都显示 `naysay
+  v0.1`——版本号在三处被手写死了。现在所有横幅从
+  `CARGO_PKG_VERSION` 编译期派生(`crate::VERSION`),setup 框补宽
+  动态计算,任意长度的版本号都不会破框。发现者是一位用户问出了
+  最准的问题:"为什么 0.3 还显示 v0.1?"
+
+---
 
 ### naysay v0.3.1 — 2026-09-05
 

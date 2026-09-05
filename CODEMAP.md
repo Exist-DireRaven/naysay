@@ -34,7 +34,8 @@ tool. If you can't, that's the part to study next.
 
 | symbol | what it does |
 |--------|--------------|
-| `launch_interactive` | First-launch experience. If no key (env or keyring), prints an ASCII setup box, prompts for one, sets the env var for this process, verifies it loaded, then drops into the TUI. Goal: double-click → TUI without jargon. |
+| `launch_interactive` | First-launch experience. If no key (probed via env + keyring without touching `config()`), walks an interactive provider picker: 6 presets (Ollama / DeepSeek / GLM / OpenAI / MiniMax / OpenRouter) + Custom. Writes `naysay.toml`, saves the key to the keyring, sets the env var for this process, then drops into the TUI. |
+| `ProviderPreset` / `PRESETS` / `parse_provider_choice` / `provider_toml_body` | The picker's data and pure helpers. Presets are the three naysay.toml fields pre-filled — a new provider is a new row, never new code (D-022). |
 | `install_panic_hook` | Writes a panic backtrace to `<data_dir>/panic.log` and eprintln's the path. Keeps debugging possible even when the console closes. |
 
 ### LLM wire types (OpenAI chat-completions)

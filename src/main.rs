@@ -734,6 +734,111 @@ async fn main() -> Result<()> {
 ///
 /// Goal: a non-technical user can double-click the binary and end up in the
 /// TUI without needing to know what an "API key" or "environment variable" is.
+/// First-run provider presets. Data, not abstraction (D-022): each row is
+/// just the three fields `naysay.toml` already supports, pre-filled. A new
+/// provider is a new row, never new code.
+struct ProviderPreset {
+    label: &'static str,
+    chat_url: &'static str,
+    model: &'static str,
+    api_key_env: &'static str,
+    needs_key: bool,
+    note: &'static str,
+}
+
+const PRESETS: &[ProviderPreset] = &[
+    ProviderPreset {
+        label: "Ollama",
+        chat_url: "http://localhost:11434/v1/chat/completions",
+        model: "qwen2.5:7b",
+        api_key_env: "NAYSAY_API_KEY",
+        needs_key: false,
+        note: "local, free, offline — no key needed",
+    },
+    ProviderPreset {
+        label: "DeepSeek",
+        chat_url: "https://api.deepseek.com/chat/completions",
+        model: "deepseek-chat",
+        api_key_env: "DEEPSEEK_API_KEY",
+        needs_key: true,
+        note: "platform.deepseek.com",
+    },
+    ProviderPreset {
+        label: "GLM (Zhipu)",
+        chat_url: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        model: "glm-4-flash",
+        api_key_env: "ZHIPU_API_KEY",
+        needs_key: true,
+        note: "open.bigmodel.cn — glm-4-flash is free",
+    },
+    ProviderPreset {
+        label: "OpenAI",
+        chat_url: "https://api.openai.com/v1/chat/completions",
+        model: "gpt-4o-mini",
+        api_key_env: "OPENAI_API_KEY",
+        needs_key: true,
+        note: "platform.openai.com",
+    },
+    ProviderPreset {
+        label: "MiniMax",
+        chat_url: "https://api.minimax.chat/v1/text/chatcompletion_v2",
+        model: "MiniMax-Text-01",
+        api_key_env: "MINIMAX_API_KEY",
+        needs_key: true,
+        note: "api.minimax.chat — the previous default",
+    },
+    ProviderPreset {
+        label: "OpenRouter",
+        chat_url: "https://openrouter.ai/api/v1/chat/completions",
+        model: "anthropic/claude-3.5-sonnet",
+        api_key_env: "OPENROUTER_API_KEY",
+        needs_key: true,
+        note: "openrouter.ai — also carries Claude models",
+    },
+];
+
+/// Is a key already configured anywhere? Deliberately does NOT touch
+/// `config()`: at first run the OnceLock must stay unfrozen until the
+/// picker has written the chosen provider to naysay.toml, so the TUI's
+/// first config read sees the choice.
+fn probe_has_key() -> bool {
+    for name in [DEFAULT_API_KEY_ENV, "MINIMAX_API_KEY"] {
+        if std::env::var(name).map(|v| !v.is_empty()).unwrap_or(false) {
+            return true;
+        }
+    }
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
+        if matches!(entry.get_password(), Ok(k) if !k.is_empty()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// "1" -> 0, " 3 " -> 2, out-of-range or garbage -> None.
+fn parse_provider_choice(input: &str, max: usize) -> Option<usize> {
+    let n: usize = input.trim().parse().ok()?;
+    if n >= 1 && n <= max {
+        Some(n - 1)
+    } else {
+        None
+    }
+}
+
+fn is_valid_env_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// The `[provider]` table body written on first run.
+fn provider_toml_body(chat_url: &str, model: &str, api_key_env: &str) -> String {
+    format!(
+        "[provider]\nchat_url = \"{}\"\nmodel = \"{}\"\napi_key_env = \"{}\"\n",
+        chat_url, model, api_key_env
+    )
+}
+
 /// One row of the first-run ASCII box: `  |   {text}<pad>|`. The frame's
 /// inner width is fixed (50 columns); padding is computed so version bumps
 /// can never break the alignment again.
@@ -749,7 +854,10 @@ async fn launch_interactive(
     music: bool,
     resume: Option<std::path::PathBuf>,
 ) -> Result<()> {
-    if load_api_key().is_err() {
+    // First-run: if no key is configured anywhere, walk the user through
+    // the provider picker. The probe avoids config() on purpose — see
+    // probe_has_key.
+    if !probe_has_key() {
         eprintln!();
         eprintln!("  +--------------------------------------------------+");
         eprintln!("  |                                                  |");
@@ -764,53 +872,142 @@ async fn launch_interactive(
         eprintln!("  |                                                  |");
         eprintln!("  +--------------------------------------------------+");
         eprintln!();
-        eprintln!("   Default provider is MiniMax — get a free key at:");
+        eprintln!("   Pick a provider (any OpenAI-compatible endpoint works):");
         eprintln!();
-        eprintln!("       -> https://api.minimax.chat");
+        for (i, p) in PRESETS.iter().enumerate() {
+            eprintln!("   [{:>2}] {:<12} {}", i + 1, p.label, p.note);
+        }
+        let custom_row = format!(
+            "[{:>2}] {:<12} {}",
+            PRESETS.len() + 1,
+            "Custom",
+            "any OpenAI-compatible endpoint"
+        );
+        eprintln!("   {custom_row}");
         eprintln!();
-        eprintln!("   (Any OpenAI-compatible endpoint works — OpenAI,");
-        eprintln!("    DeepSeek, local Ollama. See naysay.toml in the");
-        eprintln!("    data dir to switch.)");
+        eprintln!("   (Claude note: Anthropic's API is not OpenAI-compatible —");
+        eprintln!("    pick OpenRouter and a claude-* model to use it.)");
         eprintln!();
-        eprintln!("   Copy your key, then paste below and press Enter:");
-        eprintln!();
-        eprint!("       api key  > ");
-        std::io::Write::flush(&mut std::io::stderr()).ok();
 
-        let mut key = String::new();
-        std::io::stdin()
-            .lock()
-            .read_line(&mut key)
-            .context("read api key from stdin")?;
-        let key = key.trim().to_string();
-        if key.is_empty() {
-            anyhow::bail!("no key entered");
+        let choice = loop {
+            eprint!("   provider [1-{}] > ", PRESETS.len() + 1);
+            std::io::Write::flush(&mut std::io::stderr()).ok();
+            let mut line = String::new();
+            std::io::stdin()
+                .lock()
+                .read_line(&mut line)
+                .context("read provider choice")?;
+            match parse_provider_choice(line.trim(), PRESETS.len() + 1) {
+                Some(n) => break n,
+                None => {
+                    eprintln!("   pick a number between 1 and {}", PRESETS.len() + 1)
+                }
+            }
+        };
+
+        let (chat_url, model, api_key_env, needs_key) = if choice < PRESETS.len() {
+            let p = &PRESETS[choice];
+            (
+                p.chat_url.to_string(),
+                p.model.to_string(),
+                p.api_key_env.to_string(),
+                p.needs_key,
+            )
+        } else {
+            let url = loop {
+                eprint!("   chat url (e.g. https://host/v1/chat/completions) > ");
+                std::io::Write::flush(&mut std::io::stderr()).ok();
+                let mut line = String::new();
+                std::io::stdin()
+                    .lock()
+                    .read_line(&mut line)
+                    .context("read url")?;
+                let line = line.trim().to_string();
+                if line.starts_with("http://") || line.starts_with("https://") {
+                    break line;
+                }
+                eprintln!("   (must start with http:// or https://)");
+            };
+            let model = loop {
+                eprint!("   model id > ");
+                std::io::Write::flush(&mut std::io::stderr()).ok();
+                let mut line = String::new();
+                std::io::stdin()
+                    .lock()
+                    .read_line(&mut line)
+                    .context("read model")?;
+                let line = line.trim().to_string();
+                if !line.is_empty() && !line.contains('"') {
+                    break line;
+                }
+                eprintln!("   (model id required, no quotes)");
+            };
+            eprint!("   api key env name [NAYSAY_API_KEY] > ");
+            std::io::Write::flush(&mut std::io::stderr()).ok();
+            let mut env_line = String::new();
+            std::io::stdin()
+                .lock()
+                .read_line(&mut env_line)
+                .context("read env name")?;
+            let env_name = env_line.trim().to_string();
+            let env_name = if is_valid_env_name(&env_name) {
+                env_name
+            } else {
+                DEFAULT_API_KEY_ENV.to_string()
+            };
+            (url, model, env_name, true)
+        };
+
+        let key = if needs_key {
+            loop {
+                eprint!("   api key  > ");
+                std::io::Write::flush(&mut std::io::stderr()).ok();
+                let mut line = String::new();
+                std::io::stdin()
+                    .lock()
+                    .read_line(&mut line)
+                    .context("read api key")?;
+                let key = line.trim().to_string();
+                if !key.is_empty() {
+                    break key;
+                }
+                eprintln!("   (key required)");
+            }
+        } else {
+            // Ollama ignores the key; a placeholder keeps load_api_key happy.
+            "ollama-local".to_string()
+        };
+
+        // Persist the choice for every future run.
+        let dir = data_dir()?;
+        let path = dir.join("naysay.toml");
+        std::fs::write(&path, provider_toml_body(&chat_url, &model, &api_key_env))
+            .context("write naysay.toml")?;
+
+        // Keyring for future processes.
+        if needs_key {
+            if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
+                match entry.set_password(&key) {
+                    Ok(()) => eprintln!("   + key stored in OS keyring"),
+                    Err(e) => eprintln!("   (keyring unavailable: {e} — env var still set)"),
+                }
+            }
+        } else {
+            eprintln!("   + no key needed for local models");
         }
 
-        // Set for this process — load_api_key() checks the configured env
-        // var name first.
-        let env_name = config().api_key_env.clone();
+        // Env for THIS process: config() initializes later (first call in
+        // tui::run) and reads the file we just wrote, but the env vars are
+        // belt-and-braces for the legacy MINIMAX_API_KEY priority rule.
         #[allow(unused_unsafe)]
         unsafe {
-            std::env::set_var(&env_name, &key);
+            std::env::set_var(&api_key_env, &key);
         }
 
-        // Verify the key actually loaded — surfaces typos at first launch.
-        match load_api_key() {
-            Ok(k) => {
-                eprintln!();
-                eprintln!("   + key loaded ({} chars)", k.len());
-                eprintln!();
-                eprintln!("   (Tip: run `naysay key set` later to save it to the");
-                eprintln!("    OS keyring so you don't have to paste it again.)");
-                eprintln!();
-                eprintln!("   launching TUI...");
-                std::thread::sleep(std::time::Duration::from_millis(1200));
-            }
-            Err(e) => {
-                anyhow::bail!("key rejected: {e}");
-            }
-        }
+        eprintln!();
+        eprintln!("   + provider: {model}  ·  {}", endpoint_host(&chat_url));
+        eprintln!("   launching TUI...");
+        std::thread::sleep(std::time::Duration::from_millis(1200));
     }
 
     tui::run(sound, music, resume).await
@@ -2864,6 +3061,53 @@ CONFIDENCE: 0.62\n";
         // reading by full stem also works
         assert!(read_record_by_id(&dir, &format!("postmortem-{child}")).is_some());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ─── provider picker (v0.4) ─────────────────────────────────────────────────
+
+    #[test]
+    fn provider_choice_parses_ranges_only() {
+        assert_eq!(parse_provider_choice("1", 7), Some(0));
+        assert_eq!(parse_provider_choice(" 7 ", 7), Some(6));
+        assert_eq!(parse_provider_choice("0", 7), None);
+        assert_eq!(parse_provider_choice("8", 7), None);
+        assert_eq!(parse_provider_choice("abc", 7), None);
+        assert_eq!(parse_provider_choice("", 7), None);
+    }
+
+    #[test]
+    fn provider_presets_are_well_formed() {
+        for p in PRESETS {
+            assert!(
+                p.chat_url.starts_with("http://") || p.chat_url.starts_with("https://"),
+                "{}: bad url",
+                p.label
+            );
+            assert!(!p.model.is_empty(), "{}: empty model", p.label);
+            assert!(
+                is_valid_env_name(p.api_key_env),
+                "{}: bad env name",
+                p.label
+            );
+            // The key is only ever unused for local servers.
+            assert_eq!((p.chat_url.starts_with("http://localhost")), !p.needs_key);
+        }
+        // Ollama must stay the no-key option — it is the whole point.
+        assert!(!PRESETS[0].needs_key);
+    }
+
+    #[test]
+    fn provider_toml_roundtrips_through_config_parse() {
+        let body = provider_toml_body(
+            "https://api.deepseek.com/chat/completions",
+            "deepseek-chat",
+            "DEEPSEEK_API_KEY",
+        );
+        let cfg = Config::parse_strict(&body).expect("valid toml");
+        assert_eq!(cfg.chat_url, "https://api.deepseek.com/chat/completions");
+        assert_eq!(cfg.model, "deepseek-chat");
+        assert_eq!(cfg.api_key_env, "DEEPSEEK_API_KEY");
+        assert!(cfg.validate().is_empty());
     }
 
     #[test]

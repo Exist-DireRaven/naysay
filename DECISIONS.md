@@ -538,3 +538,43 @@ v0.3 is the smallest change that makes naysay's decisions
 **queryable** in a useful way. It is not a knowledge graph, not a
 calibration engine, not a learning loop. Those come after at least
 one real user has produced at least ten real records.
+
+## D-022 · Interactive provider picker (v0.4.0) (2026-09-05)
+
+**Decision:** First-run setup becomes an interactive picker: six provider
+presets (Ollama, DeepSeek, GLM, OpenAI, MiniMax, OpenRouter) plus a
+custom path. The choice is written to `naysay.toml`, the key goes to
+the OS keyring, and the TUI launches against the chosen provider.
+
+**Why:**
+1. The old box assumed MiniMax and demanded a key before doing
+   anything — even local Ollama users had to type a fake key, with no
+   hint that was acceptable. A tool whose pitch is "interrogate ideas
+   for fractions of a cent" was introducing itself with a signup wall.
+2. Presets are **data, not abstraction** (the D-003 promise holds):
+   each preset is the three fields naysay.toml already supports,
+   pre-filled. A new provider is a new row in a const table, never
+   new code. The "no provider abstraction layer" rule survives
+   because there is still exactly one wire format and one code path.
+3. **Claude honesty**: Anthropic's API is not OpenAI-compatible, so
+   there is no Claude preset — the menu says so and points at
+   OpenRouter (which is OpenAI-compatible and carries Claude models).
+   Pretending otherwise would be the first lie in the docs.
+
+**Implementation trap worth recording:** `config()` is a OnceLock. The
+picker must run BEFORE the first `config()` call, or the frozen config
+would ignore the just-written naysay.toml. Hence `probe_has_key()`
+checks env + keyring directly and never touches config(); the picker
+itself reads only statics. First `config()` call happens in tui::run,
+after env vars (`api_key_env` = key) and the toml are both in place.
+
+**Trade-offs:**
+- Preset models drift (gpt-4o-mini will age). Accepted: the file is
+  user-editable, and the picker's job is a working first call, not a
+  current-events feed.
+- Ollama users get a placeholder key ("ollama-local") stored to
+  keyring so `load_api_key` passes; the server ignores it. Slightly
+  impure, far better than a fake-key prompt.
+- Smoke-testing the picker writes to the REAL `%LOCALAPPDATA%` unless
+  the test overrides `LOCALAPPDATA`. Learned the hard way; future
+  smoke tests must isolate the data dir.

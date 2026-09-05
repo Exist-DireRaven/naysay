@@ -93,15 +93,14 @@ cargo build --release
 # binary at target/release/naysay[.exe]
 ```
 
-First-run setup:
+First run? naysay walks you through a provider picker — Ollama (local,
+free, no key), DeepSeek, GLM, OpenAI, MiniMax, OpenRouter, or any
+custom OpenAI-compatible endpoint. Your choice lands in `naysay.toml`,
+the key goes to the OS keyring, and the TUI launches. Existing setups
+can still switch providers by editing `naysay.toml` or using
+`naysay key set`.
 
 ```bash
-naysay key set                          # stored in the OS keyring
-# or set the env var: export NAYSAY_API_KEY=sk-...
-
-# or point at a local Ollama — free, no key needed.
-# See naysay.toml (written on first run) for the Ollama example block.
-
 naysay premortem "your idea here"
 ```
 
@@ -284,15 +283,13 @@ cargo build --release
 # 二进制在 target/release/naysay[.exe]
 ```
 
-首次使用:
+首次运行会进入 provider 选择器——Ollama(本地、免费、免 key)、
+DeepSeek、GLM、OpenAI、MiniMax、OpenRouter,或任意自定义 OpenAI
+兼容端点。选择写入 `naysay.toml`,key 存入系统 keyring,然后直接
+进 TUI。老用户仍可编辑 `naysay.toml` 换 provider,或用
+`naysay key set`。
 
 ```bash
-naysay key set                          # 存入系统 keyring
-# 或直接用环境变量:export NAYSAY_API_KEY=sk-...
-
-# 或者用本地 Ollama:免费、离线、隐私。
-# 首次运行会写 naysay.toml,里面有 Ollama 配置范例。
-
 naysay premortem "你的想法"
 ```
 
