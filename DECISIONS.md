@@ -334,3 +334,28 @@ finalized). First release: v0.1.0 — not 1.0.
   blow 32k-token contexts.
 - CI installs libssl-dev on Ubuntu (native-tls, D-012) — documented
   cost of that decision.
+
+## D-018 · Clippy "0 warnings" must be CI-verified, not local-verified (2026-09-05)
+
+**Decision:** The "clippy `-D warnings` clean" check must be re-validated
+whenever the Rust toolchain version used by CI changes. Local
+verification against the user's installed rustc is not enough.
+
+**Why:**
+1. Clippy lints are added and modified in every rust release.
+   A codebase that passes clippy under rust 1.85 may fail under
+   1.98 (this is what caught naysay v0.1.0 — `EXPORT_TITLE` and
+   `EXPORT_TS_TAG` were never used, and `needless_borrow` flagged
+   `.replace("{x}", &x)` on a `&str`-pattern).
+2. The convention "0 warnings" is a promise to future contributors
+   and to the README. If the promise is verified only locally, it
+   can silently rot when CI's toolchain moves forward.
+3. Fixing this is cheap: pin rustc in CI via `rust-toolchain.toml` or
+   `dtolnay/rust-toolchain@stable` action; rerun the original v0.1.0
+   commit to confirm the diagnosis if it ever recurs.
+
+**Trade-off:** Pinning the toolchain is intentionally not done yet —
+the user is on a moving-edge Windows toolchain and pinning would
+silently break the install. Until pinning is chosen, every release
+must include "CI clippy green on the current stable" as an explicit
+check.
