@@ -37,7 +37,10 @@ fn main() {
         }
         match winresource::WindowsResource::new()
             .set_icon("assets/naysay.ico")
-            .set("FileDescription", &format!("naysay v{}", env!("CARGO_PKG_VERSION")))
+            .set(
+                "FileDescription",
+                &format!("naysay v{}", env!("CARGO_PKG_VERSION")),
+            )
             .set("ProductName", "naysay")
             .compile()
         {
