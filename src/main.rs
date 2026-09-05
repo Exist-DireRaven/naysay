@@ -22,6 +22,12 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Write};
 use std::sync::{Mutex, OnceLock};
 
+/// The crate version, for every user-visible banner. Deriving it here (not
+/// hand-writing "v0.1" in three places) is the fix for the stale-banner bug
+/// found in v0.3.0: the first-run box kept saying v0.1 through four
+/// releases because nothing tied it to the build.
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // ─── CLI definition ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
@@ -728,6 +734,16 @@ async fn main() -> Result<()> {
 ///
 /// Goal: a non-technical user can double-click the binary and end up in the
 /// TUI without needing to know what an "API key" or "environment variable" is.
+/// One row of the first-run ASCII box: `  |   {text}<pad>|`. The frame's
+/// inner width is fixed (50 columns); padding is computed so version bumps
+/// can never break the alignment again.
+fn setup_box_row(text: &str) -> String {
+    let inner = 50usize;
+    let lead = 3usize;
+    let pad = inner.saturating_sub(lead + text.chars().count());
+    format!("  |   {text}{}|", " ".repeat(pad))
+}
+
 async fn launch_interactive(
     sound: bool,
     music: bool,
@@ -737,7 +753,12 @@ async fn launch_interactive(
         eprintln!();
         eprintln!("  +--------------------------------------------------+");
         eprintln!("  |                                                  |");
-        eprintln!("  |   naysay v0.1 — says no before your agents do    |");
+        eprintln!(
+            "{}",
+            setup_box_row(&format!(
+                "naysay v{VERSION} — says no before your agents do"
+            ))
+        );
         eprintln!("  |                                                  |");
         eprintln!("  |   first-time setup                               |");
         eprintln!("  |                                                  |");
@@ -2843,6 +2864,19 @@ CONFIDENCE: 0.62\n";
         // reading by full stem also works
         assert!(read_record_by_id(&dir, &format!("postmortem-{child}")).is_some());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn setup_box_row_keeps_frame_aligned_across_versions() {
+        // The stale-banner bug: v0.1 vs v0.3.0 vs a hypothetical v0.10.0
+        // must all produce rows of identical display width.
+        let v1 = setup_box_row("naysay v0.1 — says no before your agents do");
+        let v3 = setup_box_row("naysay v0.3.0 — says no before your agents do");
+        let v10 = setup_box_row("naysay v0.10.0 — says no before your agents do");
+        assert_eq!(v1.chars().count(), v3.chars().count());
+        assert_eq!(v3.chars().count(), v10.chars().count());
+        assert!(v1.starts_with("  |   "));
+        assert!(v1.ends_with('|'));
     }
 
     #[test]

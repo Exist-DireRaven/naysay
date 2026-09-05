@@ -16,6 +16,20 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.3.1 — 2026-09-05
+
+#### Fixed
+
+- **Stale version banner.** The first-run setup box kept saying
+  `naysay v0.1` through four releases because the version was
+  hand-written in three places. Every banner now derives from
+  `CARGO_PKG_VERSION` at compile time (`crate::VERSION`), and the
+  setup box computes its padding so future version strings of any
+  length stay frame-aligned. Found by a user asking exactly the right
+  question: "why does 0.3 still say v0.1?"
+
+---
+
 ### naysay v0.3.0 — 2026-09-05
 
 Decision memory. The store is a directory of JSON files under
@@ -221,6 +235,18 @@ First naysay release. Built on pair v1.3.
 <a id="中文"></a>
 
 ## 中文
+
+### naysay v0.3.1 — 2026-09-05
+
+#### 修复
+
+- **版本横幅过期。** 首次运行的 setup 框连着四个版本都在显示
+  `naysay v0.1`——因为版本号在三处被手写死了。现在所有横幅都从
+  `CARGO_PKG_VERSION` 编译期派生(`crate::VERSION`),setup 框的
+  补宽动态计算,任意长度的版本号都不会破坏对齐。发现者是一位用户
+  问出了最准的问题:"为什么 0.3 还显示 v0.1?"
+
+---
 
 ### naysay v0.3.0 — 2026-09-05
 

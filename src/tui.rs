@@ -108,7 +108,7 @@ fn debug_log(msg: &str) {
 /// * Status / banner / help lines are English by design; the rest of the
 ///   surface is fully bilingual (README, prompts.toml, error hints).
 mod ui_text {
-    pub const BANNER_HEADER: &str = "naysay v0.1.0  ·  model: {model}  ·  provider: {host}";
+    pub const BANNER_HEADER: &str = "naysay v{version}  ·  model: {model}  ·  provider: {host}";
     pub const BANNER_INTRO: &str =
         "type a command, or anything for freeform. verdict family first:";
     pub const BANNER_VERDICT: &str =
@@ -245,6 +245,7 @@ pub async fn run(
     let host = endpoint_host(&config().chat_url);
     let banner = [
         ui_text::BANNER_HEADER
+            .replace("{version}", crate::VERSION)
             .replace("{model}", &state.model)
             .replace("{host}", host),
         ui_text::BANNER_INTRO.to_string(),
