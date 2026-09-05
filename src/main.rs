@@ -2773,9 +2773,12 @@ mod tests {
     // ─── decision store (v0.3) ─────────────────────────────────────────────────
 
     fn tmp_store(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("naysay-store-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
+        // Each test gets an isolated `.naysay/decisions` tree — the
+        // assumption registry writes to the PARENT dir, so parallel tests
+        // must never share one.
+        let root = std::env::temp_dir().join(format!("naysay-store-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        root.join(".naysay").join("decisions")
     }
 
     const SAMPLE_BODY: &str = "1. Cause of death — scope.\n\
@@ -2864,7 +2867,7 @@ CONFIDENCE: 0.62\n";
         assert_eq!(child_rec.parent.as_deref(), Some(id.as_str()));
         // reading by full stem also works
         assert!(read_record_by_id(&dir, &format!("postmortem-{child}")).is_some());
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
     }
 
     // ─── provider picker (v0.4) ─────────────────────────────────────────────────
