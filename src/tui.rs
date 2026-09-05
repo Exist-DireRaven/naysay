@@ -123,12 +123,10 @@ mod ui_text {
     pub const BANNER_QUIT: &str = "  Esc / Ctrl+C     quit";
     pub const BANNER_RESUME: &str =
         "[ok] resumed {n} turns from {path} — new turns append to the same session";
-    pub const RESUME_FAILED: &str = "resume failed: {err}";
-    pub const SESSION_LOGS: &str = "logging to {path}"; // REPL boot echo
 
-    pub const TAB_NO_MATCH: &str = "no command starts with '{prefix}'";
     pub const TAB_CYCLE: &str = "{n} options — Tab again to cycle";
 
+    pub const TAB_NO_MATCH: &str = "no command starts with '{prefix}'";
     pub const STATUS_BUSY: &str = "thinking [{kind}]…";
     pub const STATUS_READY: &str = "ready ({secs}s{tok})";
     pub const STATUS_READY_BUSY: &str = "{spinner} thinking · {chars} chars · esc quits";
@@ -136,51 +134,12 @@ mod ui_text {
         "{status} · verdict: premortem/spec/postmortem · ctrl+up/down history · tab · esc";
     pub const STATUS_READY_TYPING: &str = "{status} · tab completes · enter sends";
 
-    pub const HELP: &str = "generation ─────────────────────────────────────
-  angles <topic>         angles you haven't considered
-  questions <topic>      deep questions to ask
-  contrarian <claim>     steelman the opposite
-  use-cases <thing>      concrete user scenarios
-
-verdict ─────────────────────────────────────────
-  premortem <idea>       assume it died in 6 months
-  spec <idea>            spec for your coding agent
-  postmortem <idea>      it's over — review + decision-log
-
-reading ─────────────────────────────────────────
-  explain <file>         code walkthrough
-  summarize <file>       brief overview
-
-session ─────────────────────────────────────────
-  /context N             set prior turns to remember (now {n})
-  /model <name>          switch LLM (now {m})
-  /resume [file]         replay a past session into context
-  /clear                 wipe history pane
-  Ctrl+S                 save conversation to markdown
-  r                      regenerate last command
-  Tab                    complete command name
-
-the AI sees your last N turns, so you can ask follow-ups like
-\"what about X?\" or \"expand that\". any text that isn't a command
-goes to freeform.
-seed = angles alias. drill = pros alias.
-@<path> inlines a file or directory (budgeted) into the prompt.
-prompts editable in <data_dir>/prompts.toml";
-
     pub const CLEARED: &str =
         "[ok] cleared {n} remembered entries (the transcript above stays in scrollback)";
     pub const WAIT_RESUME: &str = "wait for the current call to finish, then /resume";
     pub const RESUME_NONE: &str = "no session found to resume (start one first)";
-    pub const REGEN_INFO: &str = "[↻] regenerating: {cmd}";
-    pub const EXPORTED: &str = "[ok] exported conversation to {path}";
-    pub const EXPORT_FAILED: &str = "export failed: {err}";
 
-    pub const HELP_LEAD: &str = "commands:";
-    pub const HELP_LINE: &str = "  {name:<20}{desc}";
-    pub const INPUT_PROMPT: &str = " naysay ❯ ";
-    pub const PROMPT_TPL: &str = "naysay> ";
-    pub const REPL_INTRO: &str = "naysay — the voice that says no first";
-    pub const REPL_TAIL: &str = "type `help` for commands, `quit` to exit";
+    pub const EXPORT_FAILED: &str = "export failed: {err}";
 
     // Markdown export header (kept here so the transcript stays consistent).
     pub const EXPORT_TITLE: &str = "# naysay conversation\n";
@@ -287,7 +246,7 @@ pub async fn run(
     let banner = [
         ui_text::BANNER_HEADER
             .replace("{model}", &state.model)
-            .replace("{host}", &host),
+            .replace("{host}", host),
         ui_text::BANNER_INTRO.to_string(),
         ui_text::BANNER_VERDICT.to_string(),
         ui_text::BANNER_GENERATION.to_string(),
@@ -1755,8 +1714,12 @@ fn export_conversation(history: &[HistoryEntry]) -> std::io::Result<std::path::P
         .join(format!("naysay-{ts}.md"));
 
     let mut f = std::fs::File::create(&path)?;
-    writeln!(f, "# naysay conversation\n")?;
-    writeln!(f, "_exported at epoch {ts}_\n")?;
+    writeln!(f, "{}", ui_text::EXPORT_TITLE)?;
+    writeln!(
+        f,
+        "{}",
+        ui_text::EXPORT_TS_TAG.replace("{ts}", &ts.to_string())
+    )?;
 
     for entry in history {
         match entry {
