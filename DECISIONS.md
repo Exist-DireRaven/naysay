@@ -578,3 +578,68 @@ after env vars (`api_key_env` = key) and the toml are both in place.
 - Smoke-testing the picker writes to the REAL `%LOCALAPPDATA%` unless
   the test overrides `LOCALAPPDATA`. Learned the hard way; future
   smoke tests must isolate the data dir.
+
+## D-023 · v0.4 external review — the archive-to-memory turn (2026-09-05)
+
+**Decision:** A second external review scored v0.4 at 8.0/10 and made
+one criticism that outranks everything else in it: **Decision Memory is
+currently a Decision Archive** — `by-id`/`link`/`unknowns` answer
+"what did I store?", not "how do past decisions shape this one?". v0.5
+therefore does ONE thematic thing: turn the archive toward memory.
+
+### Adopted in v0.5 (this release)
+
+1. **`decisions relevant <idea>`** — deterministic retrieval (token
+   overlap, no LLM, no dependencies). The review's architectural
+   boundary is adopted verbatim: *retrieval is deterministic;
+   interpretation is the LLM's job*. v0.5 ships only the retrieval
+   half; piping it into an LLM is a user exercise until v0.6.
+2. **`--parent <ID>`** on premortem / spec / postmortem — decision
+   revision lineage (DEC-001 → REVISIT → DEC-023) becomes writable.
+   The `parent` field existed since v0.3 but nothing wrote it.
+3. **`naysay calibration`** — the honest minimal version. premortem
+   prompts now emit a structured `VERDICT: BUILD|DON'T BUILD` line;
+   postmortem prompts emit `OUTCOME: BUILT|KILLED|ABANDONED|UNKNOWN`.
+   The calibration command links premortems to their child
+   postmortems and reports agreement. It prints an explicit caveat
+   when there are fewer linked pairs than a statistic deserves.
+4. **`src/store.rs`** — Decision leaves the CLI file. main.rs was
+   ~3000 lines and climbing; the review proposed a guardrail
+   (split at 4000/3000 LOC). We split **before** hitting it, because
+   moving code after the boundary is refactoring, moving it before is
+   hygiene.
+5. **README "naysay's own decision record"** — the self-experiment is
+   now public: every logged decision, the kill cases, the lineage.
+
+### Deferred (logged, with the condition that re-opens them)
+
+- **MODEL CONFIDENCE rename** (CONFIDENCE ≠ TRUTH): correct criticism,
+  but the extraction protocol is stable and stored records already use
+  CONFIDENCE. Renames happen when calibration output exists to show
+  the *contrast* between model confidence and calibrated confidence —
+  otherwise the rename renames a number nobody uses yet.
+- **JSON schema / structured output API**: parser drift is real
+  ("Confidence: high" vs "0.8"), but schema-locking the LLM output
+  before the decision model stabilizes optimizes the wrong layer.
+  Re-open when ≥3 real users parse the records programmatically.
+- **Verdict taxonomy** (BUILD/KILL/DEFER/VALIDATE/REVISE): the premortem
+  prompt already asks for "build it at what scope or don't" — the
+  richer vocabulary lands when the calibration data shows the binary
+  verdict is actually lossy.
+- **`naysay check` (engineering-decision mode)**: the usage-frequency
+  argument is the strongest point in the review, but it competes with
+  the relevant-retrieval work for the same release. Logged as the
+  first candidate for v0.6.
+- **Full calibration dashboard**: needs a corpus. The v0.5 command
+  prints what exists and says so.
+
+### Rejected (unchanged from D-019)
+
+MCP / web UI / cloud sync / team dashboards / plugins / agent
+orchestration / vector DB / SaaS. The review agrees; noted twice now.
+
+### The new guardrail (standing rule)
+
+**main.rs ≤ 4000 LOC, tui.rs ≤ 3000 LOC.** Crossing either line stops
+feature work and starts module extraction. src/store.rs is the first
+execution of this rule.

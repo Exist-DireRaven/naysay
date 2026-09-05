@@ -12,8 +12,8 @@ This file is part of the codebase. If you change the rules, change this file.
 Companion to `DECISIONS.md` (which answers "why?"). This answers
 "what?".
 
-Codebase at v0.1.0: ~3400 lines across `src/main.rs` + `src/tui.rs`.
-If you can read both files end-to-end with this map in hand, you own the
+Codebase at v0.5.0: ~5300 lines across `src/main.rs` + `src/tui.rs` + `src/store.rs`.
+If you can read all three files end-to-end with this map in hand, you own the
 tool. If you can't, that's the part to study next.
 
 ---
@@ -34,6 +34,9 @@ tool. If you can't, that's the part to study next.
 
 | symbol | what it does |
 |--------|--------------|
+| `decisions relevant <idea>` / `run_d_relevant` | Deterministic retrieval: Jaccard overlap between the query tokens and each record's idea+body tokens. No LLM — interpretation is the caller's job (D-023). |
+| `naysay calibration` / `run_calibration` | Links premortem verdicts (incl. the v0.5 structured `VERDICT: BUILD|DON'T BUILD` line) to child postmortem outcomes (`OUTCOME: BUILT|KILLED|ABANDONED|UNKNOWN`). Prints an honesty caveat when the corpus is too small. |
+| `extract_verdict` / `extract_outcome` / `classify_verdict_outcome` / `tokenize` / `relevance_score` | Pure helpers behind the two features — all unit-tested. |
 | `launch_interactive` | First-launch experience. If no key (probed via env + keyring without touching `config()`), walks an interactive provider picker: 6 presets (Ollama / DeepSeek / GLM / OpenAI / MiniMax / OpenRouter) + Custom. Writes `naysay.toml`, saves the key to the keyring, sets the env var for this process, then drops into the TUI. |
 | `ProviderPreset` / `PRESETS` / `parse_provider_choice` / `provider_toml_body` | The picker's data and pure helpers. Presets are the three naysay.toml fields pre-filled — a new provider is a new row, never new code (D-022). |
 | `install_panic_hook` | Writes a panic backtrace to `<data_dir>/panic.log` and eprintln's the path. Keeps debugging possible even when the console closes. |

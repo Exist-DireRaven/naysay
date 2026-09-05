@@ -1459,7 +1459,7 @@ async fn run_postmortem<F: FnMut(&str) + Send>(
          written to paste into a DECISIONS.md: what was tried, what \
          happened, what to do differently next time.\n\n\
 \n\
-         After the postmortem, add a short CALIBRATION section:\n\n\
+         After the postmortem, add a short CALIBRATION section. Its first          line must be exactly one of: `OUTCOME: BUILT`, `OUTCOME: KILLED`,          `OUTCOME: ABANDONED`, `OUTCOME: UNKNOWN`.\n\n\
 \n\
          CALIBRATION — if a premortem was run for this project, did the \
          verdict hold? If you said BUILD and it was killed, or KILL and \

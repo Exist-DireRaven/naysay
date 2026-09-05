@@ -16,6 +16,49 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.5.0 — 2026-09-05
+
+The archive becomes memory. One theme: past decisions start shaping
+present ones. Shaped by a second external review of v0.4 (8.0/10 —
+see DECISIONS.md D-023).
+
+#### Added
+
+- **`naysay decisions relevant "<idea>"`** — deterministic retrieval
+  over the decision store: Jaccard token overlap between the query
+  and each record's idea+body, ranked, top 10. No LLM, no network,
+  no dependencies. Retrieval is deterministic; interpretation is
+  the LLM's job (the architectural boundary suggested in review).
+- **`--parent <ID>`** on premortem / spec / postmortem — decision
+  revision lineage is now writable: DEC-001 → REVISIT → DEC-023.
+  The `parent` field existed since v0.3; nothing wrote it until now.
+- **`naysay calibration`** — the honest minimal version. premortem
+  prompts now end with a structured `VERDICT: BUILD|DON'T BUILD`
+  line; postmortem prompts open CALIBRATION with a structured
+  `OUTCOME: BUILT|KILLED|ABANDONED|UNKNOWN` line; the command links
+  premortems to child postmortems and reports held / wrong /
+  overridden, with an explicit caveat while the corpus is small.
+- **`src/store.rs`** — Decision leaves the CLI file (~290 lines
+  extracted). First execution of the LOC guardrail (main.rs ≤ 4000,
+  tui.rs ≤ 3000): split before the boundary, not after.
+- **README "naysay's own decision record"** — the self-experiment is
+  public: 23 logged decisions, 2 published kill cases, the lineage
+  from killed predecessor to shipped tool.
+- **6 unit tests** — verdict/outcome extraction (3), tokenize +
+  Jaccard bounds and ordering (2), verdict-vs-outcome classification
+  across all four cells (1). Total: 71.
+
+#### Notes
+
+- LOC: main.rs ~3100, tui.rs ~2600, store.rs ~470 — all inside the
+  guardrail.
+- Deliberately deferred (D-023): MODEL CONFIDENCE rename, JSON
+  schema output, richer verdict taxonomy, `naysay check`
+  engineering-decision mode, full calibration dashboard. Each has a
+  documented re-open condition.
+
+---
+
 ### naysay v0.4.0 — 2026-09-05
 
 Interactive provider picker at first run. No new commands, no new
@@ -271,6 +314,43 @@ First naysay release. Built on pair v1.3.
 
 ## 中文
 
+### naysay v0.5.0 — 2026-09-05
+
+档案变成记忆。一个主题：过去的决定开始影响现在的决定。形状来自
+对 v0.4 的第二次外部审评(8.0/10 — 见 DECISIONS.md D-023)。
+
+#### 新增
+
+- **`naysay decisions relevant "<idea>"`** — 决策存储上的确定性
+  检索：查询与每条记录的 idea+正文做 Jaccard 词集重叠，排序取
+  前 10。零 LLM、零网络、零依赖。检索是确定性的；解读交给
+  LLM——审评提出的架构边界，原样采纳。
+- **`--parent <ID>`** 加到 premortem / spec / postmortem — 决策
+  修订谱系可写：DEC-001 → REVISIT → DEC-023。`parent` 字段
+  v0.3 就存在，直到现在才有人写它。
+- **`naysay calibration`** — 诚实极简版。premortem prompt 末尾
+  现在输出结构化 `VERDICT: BUILD|DON'T BUILD` 行;postmortem 的
+  CALIBRATION 段以结构化 `OUTCOME: BUILT|KILLED|ABANDONED|
+  UNKNOWN` 行开头;命令把 premortem 和子 postmortem 链起来，
+  报告 held / wrong / overridden，语料不足时打上明确的诚实
+  免责。
+- **`src/store.rs`** — Decision 脱离 CLI 文件(约 290 行迁出)。
+  LOC 警戒线(main.rs ≤ 4000，tui.rs ≤ 3000)的第一次执行：
+  在撞线之前拆，而不是之后。
+- **README "naysay 自己的决策记录"** — 自我实验公开：23 条
+  入档决策、2 个已发布杀项目案例、从前身被杀到工具上线的
+  谱系。
+- **6 个单元测试** — verdict/outcome 提取(3)、tokenize +
+  Jaccard 边界与排序(2)、四象限分类(1)。总数:71。
+
+#### 备注
+
+- LOC：main.rs ~3100，tui.rs ~2600，store.rs ~470——都在警戒线内。
+- 刻意延后(D-023)：MODEL CONFIDENCE 改名、JSON schema 输出、
+  更丰富的判决分类、`naysay check` 工程决策模式、完整 calibration
+  面板。每一条都有书面的重开条件。
+
+---
 ### naysay v0.4.0 — 2026-09-05
 
 首次运行变成交互式 provider 选择器。无新命令、无新 flag、无新依赖

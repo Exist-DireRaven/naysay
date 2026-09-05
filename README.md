@@ -5,6 +5,9 @@
 **你的 coding agent 会愉快地去做不该做的东西。**
 **naysay 问：你到底该不该做它？**
 
+*A decision layer between human intent and agent execution.*
+*人类意图与 agent 执行之间的决策层。*
+
 [English](#english) · [中文](#中文)
 
 ```
@@ -216,6 +219,22 @@ this README killed this project's own predecessor — the lineage is
 part of the product. Start with [CONTRIBUTING.md](CONTRIBUTING.md) if
 you want in.
 
+### naysay's own decision record
+
+The tool runs on itself. Current state, queryable in this repo:
+
+```
+logged decisions   : 23 (DECISIONS.md D-001 … D-023)
+kill cases         : 2 published (examples/) — incl. this tool's predecessor
+survivor           : the tool you are reading
+calibration        : naysay calibration   (once real loops exist)
+```
+
+The most interesting number is not the downloads — it is the list of
+things that were **not** built: a Tauri desktop app, a WASM plugin
+sandbox, a self-bootstrap installer, an AI calendar, a workflow
+platform. Every one has a documented autopsy.
+
 ### License
 
 [MIT](LICENSE)
@@ -374,6 +393,21 @@ Claude Code 能 brainstorm,但执行者问"这事该做吗"等于承包商建议
 ### 这项目怎么做的
 
 naysay 由一个人类与 AI 协作开发,规则保证所有权留在人这一边:每条设计决定都入 [DECISIONS.md](DECISIONS.md)(17 条,还在长),代码地图在 [CODEMAP.md](CODEMAP.md),协作的 agent 受 [AGENTS.md](AGENTS.md) 约束。本 README 开头的 premortem 杀掉了项目自己的前身——血统本身就是产品的一部分。想参与从 [CONTRIBUTING.md](CONTRIBUTING.md) 开始。
+
+### naysay 自己的决策记录
+
+这个工具跑在自己身上。当前状态，本仓库内可查：
+
+```
+已入档决策   : 23 条（DECISIONS.md D-001 … D-023）
+杀掉的项目   : 2 个已发布案例（examples/）—— 包括本工具的前身
+幸存者       : 你正在读的这个工具
+calibration  : naysay calibration（等真实决策闭环积累）
+```
+
+最有意思的数字不是下载量——是那份**没有被建造**的清单：Tauri 桌面
+端、WASM 插件沙箱、自举安装器、AI 日历、工作流平台。每一个都有
+带文档的尸检报告。
 
 ### 协议
 

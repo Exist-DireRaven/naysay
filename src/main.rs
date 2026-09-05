@@ -13,6 +13,7 @@
 //!   - `naysay.toml`             → any OpenAI-compatible endpoint
 //!     (MiniMax default; OpenAI, DeepSeek, local Ollama, …)
 
+mod store;
 mod tui;
 
 use anyhow::{Context, Result};
@@ -70,6 +71,11 @@ struct Cli {
     #[arg(long = "continue", global = true)]
     continue_last: bool,
 
+    /// Link the saved decision to a parent decision id (use with
+    /// premortem / spec / postmortem to build decision lineage)
+    #[arg(long, global = true, value_name = "ID")]
+    parent: Option<String>,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -125,6 +131,8 @@ enum Command {
         #[command(subcommand)]
         action: DecisionsAction,
     },
+    /// Calibration: premortem verdicts vs postmortem outcomes
+    Calibration,
     /// Diagnose common setup problems (key, sessions dir, network)
     Doctor,
 }
@@ -143,6 +151,11 @@ enum DecisionsAction {
     },
     /// List every UNKNOWNS bullet across all stored premortems
     Unknowns,
+    /// Deterministic retrieval: stored decisions resembling this idea
+    Relevant {
+        /// The idea to compare against the store
+        idea: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -693,15 +706,37 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some(Command::Premortem { idea }) => {
-            premortem(&idea, &[], cli.save.as_deref(), cli.json).await?;
+            premortem(
+                &idea,
+                &[],
+                cli.parent.as_deref(),
+                cli.save.as_deref(),
+                cli.json,
+            )
+            .await?;
             Ok(())
         }
         Some(Command::Spec { idea }) => {
-            spec(&idea, &[], cli.save.as_deref(), cli.json).await?;
+            spec(
+                &idea,
+                &[],
+                cli.parent.as_deref(),
+                cli.save.as_deref(),
+                cli.json,
+            )
+            .await?;
             Ok(())
         }
         Some(Command::Postmortem { idea, notes }) => {
-            postmortem(&idea, notes.as_deref(), &[], cli.save.as_deref(), cli.json).await?;
+            postmortem(
+                &idea,
+                notes.as_deref(),
+                &[],
+                cli.parent.as_deref(),
+                cli.save.as_deref(),
+                cli.json,
+            )
+            .await?;
             Ok(())
         }
         Some(Command::Explain { path }) => {
@@ -718,10 +753,12 @@ async fn main() -> Result<()> {
             SessionsAction::Show { file } => sessions_show(&file),
         },
         Some(Command::Decisions { action }) => match action {
-            DecisionsAction::ById { id } => run_d_by_id(&id),
-            DecisionsAction::Link { child } => run_d_link(&child),
-            DecisionsAction::Unknowns => run_d_unknowns(),
+            DecisionsAction::ById { id } => store::run_d_by_id(&id),
+            DecisionsAction::Link { child } => store::run_d_link(&child),
+            DecisionsAction::Unknowns => store::run_d_unknowns(),
+            DecisionsAction::Relevant { idea } => store::run_d_relevant(&idea),
         },
+        Some(Command::Calibration) => store::run_calibration(),
         Some(Command::Doctor) => doctor().await,
     }
 }
@@ -1086,6 +1123,7 @@ async fn drill(
 async fn premortem(
     idea: &str,
     history: &[Message],
+    parent: Option<&str>,
     save_path: Option<&str>,
     json: bool,
 ) -> Result<String> {
@@ -1098,7 +1136,7 @@ async fn premortem(
          2. Ranked killers — 3-5 probable causes of death, each with the          early warning sign that was already visible on day one.
          3. Scope autopsy — which imagined features were never touched, and          which single feature everything actually depended on.
          4. The version that survived — the smallest cut of this idea that          dodges every cause of death above.
-         5. Verdict — build it (at what scope) or don't (and what to do          instead).
+         5. Verdict — build it (at what scope) or don't (and what to do          instead). Then end the whole output with a final line of exactly          `VERDICT: BUILD` or `VERDICT: DON'T BUILD` — no other words on          that line.
 
          After the autopsy, add a short STRUCTURED section:
 
@@ -1137,7 +1175,7 @@ async fn premortem(
             })
         },
     )?;
-    if let Err(e) = save_decision("premortem", idea, &content, None) {
+    if let Err(e) = store::save_decision("premortem", idea, &content, parent) {
         eprintln!("decision-store: save failed: {e}");
     } else {
         eprintln!("decision-store: saved premortem under .naysay/decisions/");
@@ -1150,6 +1188,7 @@ async fn premortem(
 async fn spec(
     idea: &str,
     history: &[Message],
+    parent: Option<&str>,
     save_path: Option<&str>,
     json: bool,
 ) -> Result<String> {
@@ -1195,7 +1234,7 @@ async fn spec(
             })
         },
     )?;
-    if let Err(e) = save_decision("spec", idea, &content, None) {
+    if let Err(e) = store::save_decision("spec", idea, &content, parent) {
         eprintln!("decision-store: save failed: {e}");
     } else {
         eprintln!("decision-store: saved spec under .naysay/decisions/");
@@ -1209,6 +1248,7 @@ async fn postmortem(
     idea: &str,
     notes: Option<&str>,
     history: &[Message],
+    parent: Option<&str>,
     save_path: Option<&str>,
     json: bool,
 ) -> Result<String> {
@@ -1237,6 +1277,8 @@ async fn postmortem(
          5. Decision-log entry — 3-5 lines in markdown, self-contained, \
          written to paste into a DECISIONS.md: what was tried, what \
          happened, what to do differently next time.\n\n\
+         After the postmortem, add a short CALIBRATION section. Its first          line must be exactly one of: `OUTCOME: BUILT`, `OUTCOME: KILLED`,          `OUTCOME: ABANDONED`, `OUTCOME: UNKNOWN`.\n\n\
+         CALIBRATION — if a premortem was run for this project, did the          verdict hold? If you said BUILD and it was killed, or KILL and          it shipped, that is the most useful sentence in this whole          document. One paragraph: what was the original confidence,          what actually happened, and what the gap teaches about the          premortem process itself. If no premortem exists, name two          things you would have warned against that the project proved          right about.\n\n\
          Be specific to this project. Blame decisions, not people."
     );
 
@@ -1257,7 +1299,7 @@ async fn postmortem(
             })
         },
     )?;
-    if let Err(e) = save_decision("postmortem", idea, &content, None) {
+    if let Err(e) = store::save_decision("postmortem", idea, &content, parent) {
         eprintln!("decision-store: save failed: {e}");
     } else {
         eprintln!("decision-store: saved postmortem under .naysay/decisions/");
@@ -1506,7 +1548,7 @@ async fn dispatch_repl(line: &str, st: &mut ReplState) -> Result<ReplAction> {
                 eprintln!("usage: premortem <idea>");
             } else {
                 let ctx = st.context();
-                let content = premortem(rest, &ctx, None, false).await?;
+                let content = premortem(rest, &ctx, None, None, false).await?;
                 st.record(line, &content);
             }
             Ok(ReplAction::Continue)
@@ -1516,7 +1558,7 @@ async fn dispatch_repl(line: &str, st: &mut ReplState) -> Result<ReplAction> {
                 eprintln!("usage: spec <idea>");
             } else {
                 let ctx = st.context();
-                let content = spec(rest, &ctx, None, false).await?;
+                let content = spec(rest, &ctx, None, None, false).await?;
                 st.record(line, &content);
             }
             Ok(ReplAction::Continue)
@@ -1532,7 +1574,7 @@ async fn dispatch_repl(line: &str, st: &mut ReplState) -> Result<ReplAction> {
                     None => (rest, None),
                 };
                 let ctx = st.context();
-                let content = postmortem(idea, notes, &ctx, None, false).await?;
+                let content = postmortem(idea, notes, &ctx, None, None, false).await?;
                 st.record(line, &content);
             }
             Ok(ReplAction::Continue)
@@ -1609,7 +1651,7 @@ async fn dispatch_repl(line: &str, st: &mut ReplState) -> Result<ReplAction> {
             Ok(ReplAction::Continue)
         }
         "d-by-id" => {
-            run_d_by_id(rest).map_err(|e| anyhow::anyhow!("{e:#}"))?;
+            store::run_d_by_id(rest).map_err(|e| anyhow::anyhow!("{e:#}"))?;
             Ok(ReplAction::Continue)
         }
         "d-link" if rest.is_empty() => {
@@ -1617,11 +1659,23 @@ async fn dispatch_repl(line: &str, st: &mut ReplState) -> Result<ReplAction> {
             Ok(ReplAction::Continue)
         }
         "d-link" => {
-            run_d_link(rest).map_err(|e| anyhow::anyhow!("{e:#}"))?;
+            store::run_d_link(rest).map_err(|e| anyhow::anyhow!("{e:#}"))?;
             Ok(ReplAction::Continue)
         }
         "d-unknowns" => {
-            run_d_unknowns().map_err(|e| anyhow::anyhow!("{e:#}"))?;
+            store::run_d_unknowns().map_err(|e| anyhow::anyhow!("{e:#}"))?;
+            Ok(ReplAction::Continue)
+        }
+        "d-relevant" if rest.is_empty() => {
+            eprintln!("usage: d-relevant <idea>");
+            Ok(ReplAction::Continue)
+        }
+        "d-relevant" => {
+            store::run_d_relevant(rest).map_err(|e| anyhow::anyhow!("{e:#}"))?;
+            Ok(ReplAction::Continue)
+        }
+        "calibration" => {
+            store::run_calibration().map_err(|e| anyhow::anyhow!("{e:#}"))?;
             Ok(ReplAction::Continue)
         }
         other => {
@@ -2354,290 +2408,12 @@ fn sessions_show(input: &str) -> Result<()> {
     Ok(())
 }
 
-// ─── v0.3 decision store ──────────────────────────────────────────────────────────────────────
-
-/// One saved decision. A flat JSON per file under `.naysay/decisions/
-/// <kind>-<id>.json`. No schema-version field: the shape may drift across
-/// naysay versions because the user owns the file and grep is the only
-/// API surface this store promises.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct DecisionRecord {
-    /// 12 hex chars. Minted from a hash of wall-clock nanos; collision
-    /// retries up to 8 times before giving up.
-    pub id: String,
-    /// "premortem" | "spec" | "postmortem"
-    pub kind: String,
-    /// epoch seconds at write time
-    pub ts: u64,
-    pub idea: String,
-    /// Optional predecessor id, wired by the user in a future revision.
-    pub parent: Option<String>,
-    /// Full body exactly as the model produced it. Never parsed.
-    pub body: String,
-    /// The structured sections v0.2 taught the prompts to emit. Extracted
-    /// by substring scan; empty when the model skipped them. Not validated.
-    pub assumptions: Vec<String>,
-    pub evidence: Vec<String>,
-    pub unknowns: Vec<String>,
-    pub failure_conditions: Vec<String>,
-    /// 0..=100 when the model emitted a confidence number.
-    pub confidence: Option<u8>,
-}
-
-/// The store lives in the current working directory: `.naysay/decisions/`.
-/// Cwd-local by design (D-021): the user chooses which directory is a
-/// project, and therefore which decisions belong together.
-fn decisions_dir() -> std::io::Result<PathBuf> {
-    let dir = std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join(".naysay")
-        .join("decisions");
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
-
-/// 12 hex chars from a hash of wall-clock nanos. The caller retries on
-/// collision; at hundreds of records a collision is vanishingly rare.
-fn make_decision_id(nanos: u128) -> String {
-    let mut h: u64 = (nanos as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    h ^= h >> 33;
-    let bytes = h.to_be_bytes();
-    let mut out = String::with_capacity(12);
-    for b in &bytes[..6] {
-        out.push_str(&format!("{:02x}", b));
-    }
-    out
-}
-
-/// Extract the bullet list under a section heading. Forgiving by design:
-/// accepts `## HEADING`, `# HEADING`, and bare `HEADING:`; grabs `- ` /
-/// `* ` / `1. ` bullets until a blank line or the next heading. Returns
-/// an empty list when the heading is absent — never an error.
-fn extract_section(body: &str, heading: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut in_section = false;
-    let want = heading.trim().trim_end_matches(':').to_ascii_lowercase();
-    for raw in body.lines() {
-        let line = raw.trim_end();
-        if !in_section {
-            let head = line.trim_start_matches('#').trim().trim_end_matches(':');
-            if head.to_ascii_lowercase() == want {
-                in_section = true;
-            }
-        } else {
-            let t = line.trim();
-            if t.is_empty() || t.starts_with('#') {
-                in_section = false;
-                continue;
-            }
-            if let Some(rest) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
-                out.push(rest.trim().to_string());
-            } else {
-                let digits: String = t.chars().take_while(|c| c.is_ascii_digit()).collect();
-                if !digits.is_empty() && digits.len() <= 3 {
-                    let after = &t[digits.len()..];
-                    if let Some(rest) = after.strip_prefix(". ").or_else(|| after.strip_prefix(')'))
-                    {
-                        out.push(rest.trim().to_string());
-                        continue;
-                    }
-                }
-                in_section = false;
-            }
-        }
-    }
-    out
-}
-
-/// Parse the confidence number out of a line mentioning CONFIDENCE.
-/// Accepts "0.62" and "62"; returns 0..=100.
-fn extract_confidence(body: &str) -> Option<u8> {
-    for raw in body.lines() {
-        let t = raw.trim();
-        if !t.to_uppercase().contains("CONFIDENCE") {
-            continue;
-        }
-        let mut digits = String::new();
-        let mut seen_dot = false;
-        for ch in t.chars() {
-            if ch.is_ascii_digit() {
-                digits.push(ch);
-            } else if ch == '.' && !seen_dot && !digits.is_empty() {
-                digits.push(ch);
-                seen_dot = true;
-            } else if !digits.is_empty() {
-                break;
-            }
-        }
-        if let Ok(v) = digits.parse::<f64>() {
-            let scaled = if v <= 1.0 { v * 100.0 } else { v };
-            return Some(scaled.round().clamp(0.0, 100.0) as u8);
-        }
-    }
-    None
-}
-
-/// Core save, parameterized by directory so tests can use a temp dir.
-fn save_decision_to(
-    dir: &std::path::Path,
-    kind: &str,
-    idea: &str,
-    body: &str,
-    parent: Option<&str>,
-    nanos: u128,
-) -> std::io::Result<String> {
-    std::fs::create_dir_all(dir)?;
-    for _ in 0..8 {
-        let id = make_decision_id(nanos.wrapping_add(1));
-        let path = dir.join(format!("{}-{}.json", kind, id));
-        if path.exists() {
-            continue;
-        }
-        let rec = DecisionRecord {
-            id: id.clone(),
-            kind: kind.to_string(),
-            ts: (nanos / 1_000_000_000) as u64,
-            idea: idea.to_string(),
-            parent: parent.map(|s| s.to_string()),
-            body: body.to_string(),
-            assumptions: extract_section(body, "ASSUMPTIONS"),
-            evidence: extract_section(body, "EVIDENCE"),
-            unknowns: extract_section(body, "UNKNOWNS"),
-            failure_conditions: extract_section(body, "FAILURE CONDITIONS"),
-            confidence: extract_confidence(body),
-        };
-        let json = serde_json::to_string_pretty(&rec).map_err(std::io::Error::other)?;
-        std::fs::write(&path, json)?;
-        return Ok(id);
-    }
-    Err(std::io::Error::other(
-        "could not mint a fresh decision id after 8 tries",
-    ))
-}
-
-/// Save into the cwd store. Best-effort: callers print the error and move
-/// on — a failed save must never break the command's primary output.
-fn save_decision(
-    kind: &str,
-    idea: &str,
-    body: &str,
-    parent: Option<&str>,
-) -> std::io::Result<String> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let dir = decisions_dir()?;
-    save_decision_to(&dir, kind, idea, body, parent, now)
-}
-
-fn read_record_by_id(dir: &std::path::Path, id: &str) -> Option<DecisionRecord> {
-    let short = id.splitn(2, '-').last().unwrap_or(id);
-    let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .collect();
-    entries.sort();
-    for path in entries {
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if stem == id || stem.ends_with(&format!("-{}", short)) {
-            if let Ok(raw) = std::fs::read_to_string(&path) {
-                if let Ok(rec) = serde_json::from_str::<DecisionRecord>(&raw) {
-                    return Some(rec);
-                }
-            }
-        }
-    }
-    None
-}
-
-// ─── v0.3 query commands ───────────────────────────────────────────────────────────────────
-
-fn run_d_by_id(id: &str) -> Result<()> {
-    let dir = decisions_dir().context("decision store not accessible")?;
-    let Some(rec) = read_record_by_id(&dir, id) else {
-        anyhow::bail!("no decision found for id: {id}");
-    };
-    let json =
-        serde_json::to_string_pretty(&rec).map_err(|e| anyhow::anyhow!("serialize record: {e}"))?;
-    println!("{json}");
-    Ok(())
-}
-
-fn run_d_unknowns() -> Result<()> {
-    let dir = decisions_dir().context("decision store not accessible")?;
-    let mut rows: Vec<DecisionRecord> = Vec::new();
-    let entries = std::fs::read_dir(&dir).context("read decision store")?;
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        if let Ok(raw) = std::fs::read_to_string(&path) {
-            if let Ok(rec) = serde_json::from_str::<DecisionRecord>(&raw) {
-                if !rec.unknowns.is_empty() {
-                    rows.push(rec);
-                }
-            }
-        }
-    }
-    rows.sort_by_key(|r| r.ts);
-    let mut total = 0usize;
-    for rec in &rows {
-        total += rec.unknowns.len();
-        println!(
-            "# {}-{}  ({} unknown{})",
-            rec.kind,
-            rec.id,
-            rec.unknowns.len(),
-            if rec.unknowns.len() == 1 { "" } else { "s" }
-        );
-        for u in &rec.unknowns {
-            println!("  - {u}");
-        }
-        println!();
-    }
-    if total == 0 {
-        println!("(no unknowns recorded)");
-    }
-    Ok(())
-}
-
-fn run_d_link(child: &str) -> Result<()> {
-    let dir = decisions_dir().context("decision store not accessible")?;
-    let Some(target) = read_record_by_id(&dir, child) else {
-        anyhow::bail!("no decision found for: {child}");
-    };
-    println!("# {}: {}", target.kind, target.idea);
-    println!();
-    let mut current = Some(target);
-    let mut depth = 0usize;
-    while let Some(rec) = current.take() {
-        for _ in 0..depth {
-            print!("  ");
-        }
-        println!("└─ {}-{} (ts={})", rec.kind, rec.id, rec.ts);
-        if let Some(parent_id) = rec.parent.as_deref() {
-            current = read_record_by_id(&dir, parent_id);
-        }
-        depth += 1;
-    }
-    Ok(())
-}
-
 // ─── tests ──────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::*;
 
     // ── number_lines ──────────────────────────────────────────────────────────────────────
 
