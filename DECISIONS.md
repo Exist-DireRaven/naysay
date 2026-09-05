@@ -643,3 +643,38 @@ orchestration / vector DB / SaaS. The review agrees; noted twice now.
 **main.rs ≤ 4000 LOC, tui.rs ≤ 3000 LOC.** Crossing either line stops
 feature work and starts module extraction. src/store.rs is the first
 execution of this rule.
+
+## D-024 · Native rendering for wide chars + full line editing (v0.6.0) (2026-09-05)
+
+**Decision:** Two user-visible defects fixed by changing HOW text reaches
+the terminal, not what the text is:
+
+1. **CJK gaps** ("仿 生 机 械 臂"): every wide char in the transcript and
+   input row was followed by a printed blank. Root cause is in
+   ratatui 0.29's inline path: `Buffer::set_stringn` resets the follower
+   cell after a wide char, and `insert_before`'s `draw_lines` prints EVERY
+   cell without the diff skip logic — the follower blank becomes a real
+   printed space.
+2. **No cursor movement**: input was append-only (`push` + `pop`).
+
+**Fix:**
+- The transcript and the input row now bypass ratatui's cell layer for
+  text: ratatui reserves the space (`insert_before` with an empty
+  buffer / draws only the ASCII prompt), then the pre-wrapped rows are
+  printed as ONE contiguous crossterm `Print` per row. The terminal
+  renders wide chars itself — no per-cell MoveTo, no follower cells,
+  no gaps. Colors ride on spans via `SetForegroundColor`.
+- Full line editing: `cursor: usize` (char index — CJK is one step),
+  ←/→/Home/End/Delete, insertion at the cursor. The visible window
+  pins to the cursor on overflow (`input_window`), cursor placement is
+  display-width based.
+
+**Trade-offs:**
+- The transcript is written outside ratatui's buffers, so ratatui
+  doesn't know it exists — acceptable: scrollback is append-only and
+  the live region (2 rows) stays under ratatui's control.
+- Status line keeps a few width-1 non-ASCII glyphs (`·`, `│`) which
+  ratatui renders cell-perfect; only wide chars needed the bypass.
+- Tests cover the pure helpers (`input_window`, cursor editing via
+  `handle_key` simulation, wrap rows); the terminal output itself is
+  verified by smoke runs, not unit tests.

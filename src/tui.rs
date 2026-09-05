@@ -31,14 +31,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::queue;
+use crossterm::style::{Color as XColor, Print, ResetColor, SetForegroundColor};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::Position;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::{Terminal, TerminalOptions, Viewport};
+use std::io::Write;
 
 use crate::{call_llm_stream, config, endpoint_host, load_api_key, open_session_log, Prompts};
 
@@ -77,6 +80,7 @@ fn char_width(c: char) -> usize {
     }
 }
 
+#[allow(dead_code)] // canonical width measure; non-test callers use char_width
 fn display_width(text: &str) -> usize {
     text.chars().map(char_width).sum()
 }
@@ -123,7 +127,7 @@ mod ui_text {
     pub const BANNER_ANALYSIS: &str = "  analysis   pros | cons | risks | steps | examples";
     pub const BANNER_READING: &str = "  reading    explain <file>  |  summarize <file>";
     pub const BANNER_SESSION: &str =
-        "  session    /context N | /model <name> | /resume | /clear | Ctrl+S | r | Tab";
+        "  session    /context | /model | /resume | /clear | ←→ edit | Tab";
     pub const BANNER_HELP: &str = "  help       show all commands";
     pub const BANNER_LOGGING: &str = "  session    logging to {path}";
     pub const BANNER_QUIT: &str = "  Esc / Ctrl+C     quit";
@@ -383,11 +387,29 @@ pub async fn run(
                 debug_log(&format!("terminal.draw failed: {e:?}"));
                 return Err(anyhow::anyhow!("terminal draw: {e}"));
             }
-            // While busy there is no input to type into — hide the cursor
-            // so it doesn't sit parked on the input row.
+            // Native input row: ratatui drew only the ASCII prompt; the
+            // text prints here as one contiguous string (wide chars are
+            // rendered by the terminal, never as cell + follower space).
+            let screen = terminal.size()?;
+            let input_y = screen.height.saturating_sub(2);
+            let max_text = (screen.width as usize).saturating_sub(3);
+            let (visible, prefix_w) = input_window(&input, state.cursor, max_text);
+            queue!(
+                io::stdout(),
+                MoveTo(0, input_y),
+                SetForegroundColor(XColor::DarkGrey),
+                Print("> "),
+                ResetColor,
+                Print(&visible),
+                Clear(ClearType::UntilNewLine)
+            )?;
             if state.busy {
-                terminal.hide_cursor().ok();
+                queue!(io::stdout(), Hide)?;
+            } else {
+                let cx = (2 + prefix_w).min(screen.width.saturating_sub(1) as usize) as u16;
+                queue!(io::stdout(), MoveTo(cx, input_y), Show)?;
             }
+            io::stdout().flush()?;
 
             // Timeout for events
             let elapsed = last_tick.elapsed();
@@ -480,6 +502,7 @@ pub async fn run(
     // stays readable after exit, which is the whole point of inline mode.
     crate::set_tui_active(false);
     disable_raw_mode().ok();
+    queue!(io::stdout(), Show).ok();
     println!();
     debug_log("terminal restored");
 
@@ -658,6 +681,10 @@ struct TuiState {
     /// Previously submitted inputs, oldest first. Ctrl+↑ / Ctrl+↓ walk this
     /// list; capped so a long session can't grow it without bound.
     input_history: Vec<String>,
+    /// Cursor position in the input, as a CHAR index (not bytes) — CJK
+    /// chars are one cursor step each. Full line editing: Left/Right/
+    /// Home/End/Delete + insertion at the cursor.
+    cursor: usize,
     /// Position in `input_history` while recalling. `None` = not recalling;
     /// typing any character cancels the recall.
     recall_idx: Option<usize>,
@@ -685,6 +712,7 @@ impl TuiState {
             context_turns: 3,
             model: config().model.clone(),
             input_history: Vec::new(),
+            cursor: 0,
             recall_idx: None,
             session_path: None,
             flushed: 0,
@@ -731,6 +759,45 @@ const MUTED: Color = Color::DarkGray;
 
 // ─── Input handling ─────────────────────────────────────────────────────────────────────
 
+/// Byte offset of char index `n` in `s` (cursor positions are char-based
+/// because CJK chars are one cursor step each).
+fn byte_index_of_char(s: &str, n: usize) -> usize {
+    s.char_indices().nth(n).map(|(b, _)| b).unwrap_or(s.len())
+}
+
+/// The visible window of the input around the cursor, plus the display
+/// width of the text BEFORE the cursor inside that window (for cursor
+/// placement). Short input: whole string, cursor mid-window. Overflow:
+/// the window pins to the cursor so it is always visible.
+fn input_window(input: &str, cursor: usize, max: usize) -> (String, usize) {
+    let chars: Vec<char> = input.chars().collect();
+    let cursor = cursor.min(chars.len());
+    let prefix_w: usize = chars[..cursor].iter().map(|c| char_width(*c)).sum();
+    let mut w = 0usize;
+    let mut out = String::new();
+    if prefix_w <= max {
+        for c in &chars {
+            let cw = char_width(*c);
+            if w + cw > max {
+                break;
+            }
+            w += cw;
+            out.push(*c);
+        }
+        (out, prefix_w)
+    } else {
+        for c in &chars[cursor..] {
+            let cw = char_width(*c);
+            if w + cw > max {
+                break;
+            }
+            w += cw;
+            out.push(*c);
+        }
+        (out, 0)
+    }
+}
+
 fn handle_key(key: KeyEvent, input: &mut String, state: &mut TuiState) -> KeyAction {
     // Ctrl+C / Ctrl+Q always quits, even when busy.
     if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -757,6 +824,7 @@ fn handle_key(key: KeyEvent, input: &mut String, state: &mut TuiState) -> KeyAct
     // Tab triggers command completion on the first word.
     if key.code == KeyCode::Tab {
         apply_completion(input, state);
+        state.cursor = input.chars().count();
         return KeyAction::None;
     }
 
@@ -769,17 +837,44 @@ fn handle_key(key: KeyEvent, input: &mut String, state: &mut TuiState) -> KeyAct
 
     match key.code {
         KeyCode::Char(c) => {
-            input.push(c);
+            let b = byte_index_of_char(input, state.cursor);
+            input.insert(b, c);
+            state.cursor += 1;
             state.recall_idx = None;
             state.completion = CompletionState::default();
         }
         KeyCode::Backspace => {
-            input.pop();
-            state.recall_idx = None;
-            state.completion = CompletionState::default();
+            if state.cursor > 0 {
+                state.cursor -= 1;
+                let b = byte_index_of_char(input, state.cursor);
+                input.remove(b);
+                state.recall_idx = None;
+                state.completion = CompletionState::default();
+            }
+        }
+        KeyCode::Delete => {
+            let len = input.chars().count();
+            if state.cursor < len {
+                let b = byte_index_of_char(input, state.cursor);
+                input.remove(b);
+                state.completion = CompletionState::default();
+            }
+        }
+        KeyCode::Left => {
+            state.cursor = state.cursor.saturating_sub(1);
+        }
+        KeyCode::Right => {
+            state.cursor = (state.cursor + 1).min(input.chars().count());
+        }
+        KeyCode::Home => {
+            state.cursor = 0;
+        }
+        KeyCode::End => {
+            state.cursor = input.chars().count();
         }
         KeyCode::Enter => {
             let line = std::mem::take(input);
+            state.cursor = 0;
             state.completion = CompletionState::default();
             let trimmed = line.trim().to_string();
             if trimmed.is_empty() {
@@ -799,6 +894,7 @@ fn handle_key(key: KeyEvent, input: &mut String, state: &mut TuiState) -> KeyAct
                 };
                 state.recall_idx = Some(idx);
                 *input = state.input_history[idx].clone();
+                state.cursor = input.chars().count();
                 state.completion = CompletionState::default();
             }
         }
@@ -814,6 +910,7 @@ fn handle_key(key: KeyEvent, input: &mut String, state: &mut TuiState) -> KeyAct
                 Some(i) => {
                     state.recall_idx = Some(i + 1);
                     *input = state.input_history[i + 1].clone();
+                    state.cursor = input.chars().count();
                     state.completion = CompletionState::default();
                 }
             }
@@ -880,6 +977,7 @@ fn submit_line(
                  Ctrl+S                 save conversation to markdown\n  \
                  r                       regenerate last command\n  \
                  Tab                     complete command name\n\n\
+                 ←/→ Home/End Delete     full line editing\n\n\
                  the AI sees your last N turns, so you can ask follow-ups\n\
                  like \"what about X?\" or \"expand that\". any text that\n\
                  isn't a command goes to freeform.\n\
@@ -2130,15 +2228,10 @@ fn render(f: &mut ratatui::Frame, state: &TuiState, input: &str) {
     };
 
     // Input line: `> ` prompt + typed text, no box, no border.
-    // Keep the tail of the input visible when it overflows the row: show
-    // the last `max_text` display columns instead of clipping the end.
-    let max_text = (area.width as usize).saturating_sub(3);
-    let visible = tail_by_display_width(input, max_text);
-    let input_line = Line::from(vec![
-        Span::styled("> ", Style::default().fg(MUTED)),
-        Span::raw(visible.clone()),
-    ]);
-    f.render_widget(Paragraph::new(input_line), rows);
+    // Input row: ratatui draws ONLY the ASCII prompt. The input text is
+    // printed natively right after draw() — one contiguous string, so
+    // wide chars (CJK) are rendered by the terminal itself and never hit
+    // the follower-space cell bug (a printed blank after every CJK char).
 
     // Status line: everything here is metadata, so everything is dim.
     // While busy, the spinner + live char count carry the liveness that
@@ -2180,13 +2273,8 @@ fn render(f: &mut ratatui::Frame, state: &TuiState, input: &str) {
 
     // Cursor at the end of the typed input, on row 0. While busy the
     // cursor is hidden — there is nothing to type into.
-    if !state.busy {
-        // Display columns, not char count — CJK chars are 2 columns wide —
-        // measured against the VISIBLE tail, not the full input.
-        let x = (area.x + 2 + display_width(&visible) as u16)
-            .min(area.x + area.width.saturating_sub(1));
-        f.set_cursor_position(Position::new(x, area.y));
-    }
+    // Cursor placement happens natively after draw() — it must track the
+    // editable cursor position inside the visible window, not the row end.
 }
 
 // ─── Scrollback flush ──────────────────────────────────────────────────────────────────
@@ -2299,27 +2387,6 @@ fn wrap_entry_lines(lines: &[Line<'_>], width: usize) -> Vec<Line<'static>> {
     out
 }
 
-/// Tail of `text` that fits in `max` display columns (walking from the
-/// end). Used to keep the input row's cursor and text visible when the
-/// user types past the terminal width.
-fn tail_by_display_width(text: &str, max: usize) -> String {
-    if max == 0 {
-        return String::new();
-    }
-    let mut w = 0usize;
-    let mut start = 0usize;
-    for (idx, ch) in text.char_indices().rev() {
-        let cw = char_width(ch);
-        if w + cw > max {
-            start = idx + ch.len_utf8();
-            break;
-        }
-        w += cw;
-        start = idx;
-    }
-    text[start..].to_string()
-}
-
 /// Print every finished history entry to the terminal's scrollback with a
 /// single `insert_before` per batch. The in-flight streaming entry stays
 /// unflushed until its `Result` event finalizes it.
@@ -2352,17 +2419,52 @@ fn flush_pending(
         rows.extend(wrap_entry_lines(&logical, width));
     }
     state.flushed = limit;
+    if rows.is_empty() {
+        return Ok(());
+    }
 
-    // Chunks keep every insert's row count comfortably inside u16.
-    for chunk in rows.chunks(8_192) {
+    // Two-phase print. Phase 1 (ratatui): reserve the space above the
+    // viewport — insert_before owns the scroll bookkeeping. The buffer is
+    // left EMPTY on purpose: letting ratatui print the cells would emit a
+    // blank after every wide char (set_stringn resets the follower cell,
+    // and insert_before's draw_lines path prints every cell without the
+    // diff skip logic) — the reported CJK gaps.
+    //
+    // Phase 2 (native): each pre-wrapped row is ONE contiguous Print, so
+    // the terminal renders wide chars itself. No MoveTo between CJK chars,
+    // no follower cells, no gaps — and verdict colors ride on spans.
+    for chunk in rows.chunks(4_096) {
         let height = chunk.len() as u16;
-        terminal
-            .insert_before(height, |buf| {
-                for (y, line) in chunk.iter().enumerate() {
-                    buf.set_line(0, y as u16, line, width as u16);
+        terminal.insert_before(height, |_buf| {})?;
+
+        let screen_h = terminal.size()?.height;
+        let top = screen_h.saturating_sub(2).saturating_sub(height);
+        for (i, row) in chunk.iter().enumerate() {
+            queue!(io::stdout(), MoveTo(0, top + i as u16))?;
+            for span in &row.spans {
+                match span.style.fg {
+                    Some(ACCENT_RED) => {
+                        queue!(
+                            io::stdout(),
+                            SetForegroundColor(XColor::Red),
+                            Print(span.content.as_ref())
+                        )?;
+                    }
+                    Some(MUTED) => {
+                        queue!(
+                            io::stdout(),
+                            SetForegroundColor(XColor::DarkGrey),
+                            Print(span.content.as_ref())
+                        )?;
+                    }
+                    _ => {
+                        queue!(io::stdout(), Print(span.content.as_ref()))?;
+                    }
                 }
-            })
-            .context("insert transcript into scrollback")?;
+            }
+            queue!(io::stdout(), ResetColor)?;
+        }
+        io::stdout().flush()?;
     }
     Ok(())
 }
@@ -2747,14 +2849,6 @@ mod tests {
         let rows = wrap_line_to_width(&Line::from(""), 80);
         assert_eq!(rows.len(), 1);
         assert_eq!(row_text(&rows[0]), "");
-    }
-
-    #[test]
-    fn tail_by_display_width_keeps_cursor_end_visible() {
-        assert_eq!(tail_by_display_width("hello", 10), "hello");
-        assert_eq!(tail_by_display_width("hello world", 5), "world");
-        // CJK: 2 columns each — with max 4, only the last 2 chars fit.
-        assert_eq!(tail_by_display_width("做个爬虫", 4), "爬虫");
     }
 
     #[test]

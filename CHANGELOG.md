@@ -16,6 +16,39 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.6.0 — 2026-09-05
+
+Full line editing + native wide-char rendering. Both defects were
+reported by the user within one session and share one root cause:
+ratatui's cell layer mishandles wide (CJK) chars on the inline path.
+
+#### Added
+
+- **Full line editing** — the input is cursor-addressable: ←/→ move
+  by char (CJK = one step), Home/End jump, Delete removes forward,
+  and typing inserts AT the cursor. `hlp` + ← + `e` = `help`. The
+  visible window pins to the cursor when the input overflows the row
+  (`input_window`), and cursor placement is display-width based.
+- **Native wide-char rendering** — the transcript and the input row
+  bypass ratatui's cell layer for text: ratatui reserves the space
+  and draws the ASCII prompt; each pre-wrapped row prints as ONE
+  contiguous crossterm `Print` (colors ride on spans). The terminal
+  renders wide chars itself — no per-cell MoveTo, no follower-space
+  gaps (see D-024 for the root cause found in ratatui 0.29's
+  `insert_before` draw path).
+
+#### Fixed
+
+- **CJK gaps in input and transcript** ("仿 生 机 械 臂") — root
+  cause: `Buffer::set_stringn` resets the follower cell after every
+  wide char, and `insert_before`'s `draw_lines` prints every cell
+  without the diff skip logic, so a blank lands after each CJK char.
+- **Cursor could not move inside typed text** — `hlp` could not
+  become `help` without deleting `lp`.
+- 2 new unit tests (cursor mid-word insertion via `handle_key`
+  simulation, `input_window` overflow pinning). Total: 77.
+
+---
 ### naysay v0.5.1 — 2026-09-05
 
 #### Fixed
@@ -343,6 +376,35 @@ First naysay release. Built on pair v1.3.
 
 ## 中文
 
+### naysay v0.6.0 — 2026-09-05
+
+完整行编辑 + 原生宽字符渲染。两个缺陷都由用户在一个会话内报告，
+且共享同一根因：ratatui 的 cell 层在 inline 路径上对宽字符(CJK)
+处理不当。
+
+#### 新增
+
+- **完整行编辑** — 输入有了可移动光标：←/→ 按字符移动(CJK 一步)，
+  Home/End 跳转，Delete 向前删，打字在光标处插入。`hlp` + ← + `e`
+  = `help`。输入溢出时可见窗口钉住光标(`input_window`)，光标定位
+  按显示宽度。
+- **原生宽字符渲染** — 转录稿和输入行对文本绕开 ratatui 的 cell
+  层：ratatui 负责预留空间和画 ASCII 提示符；每条预换行行用一次
+  连续的 crossterm `Print` 打印(颜色随 span)。宽字符由终端自己
+  渲染——无逐 cell MoveTo、无 follower 空格(根因见 D-024:
+  ratatui 0.29 `insert_before` 打印路径的缺陷)。
+
+#### 修复
+
+- **输入框和转录稿的中文空隙**("仿 生 机 械 臂")——根因:
+  `Buffer::set_stringn` 在每个宽字符后重置 follower 单元,而
+  `insert_before` 的 `draw_lines` 无差别打印每个 cell(不走 diff
+  跳过逻辑),于是每个中文字后面跟一个真实的空格。
+- **光标无法移进已输入文本** — `hlp` 没法不删 `lp` 变成 `help`。
+- 2 个新单元测试(`handle_key` 模拟的光标中插、`input_window`
+  溢出钉住)。总数:77。
+
+---
 ### naysay v0.5.1 — 2026-09-05
 
 #### 修复
