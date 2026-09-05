@@ -16,6 +16,21 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.6.1 — 2026-09-05
+
+#### Added
+
+- **Windows executable icon** — `assets/naysay.ico` (multi-size 16-256)
+  is embedded into the .exe at build time via `winresource`, so
+  Explorer/Taskbar show the naysay icon. CI release builds embed it
+  (MSVC runner); local GNU-toolchain builds skip gracefully when the
+  resource toolchain is unavailable (the user's mingw64 gcc currently
+  fails to spawn cc1 — a toolchain issue, not a naysay one).
+- **Folder icon** — the repo folder ships `naysay.ico` +
+  `desktop.ini` (`IconResource`) so Explorer shows the icon for the
+  checked-out folder too.
+
+---
 ### naysay v0.6.0 — 2026-09-05
 
 Full line editing + native wide-char rendering. Both defects were
@@ -376,6 +391,19 @@ First naysay release. Built on pair v1.3.
 
 ## 中文
 
+### naysay v0.6.1 — 2026-09-05
+
+#### 新增
+
+- **Windows 可执行文件图标** — `assets/naysay.ico`(16-256 多尺寸)在
+  构建期通过 `winresource` 嵌入 .exe,资源管理器/任务栏显示 naysay
+  图标。CI 发布构建嵌入(MSVC runner);本地 GNU 工具链若资源工具
+  不可用则优雅跳过(本机 mingw64 gcc 目前无法启动 cc1——工具链
+  问题,非 naysay)。
+- **文件夹图标** — 仓库自带 `naysay.ico` + `desktop.ini`
+  (`IconResource`),检出后资源管理器同样显示文件夹图标。
+
+---
 ### naysay v0.6.0 — 2026-09-05
 
 完整行编辑 + 原生宽字符渲染。两个缺陷都由用户在一个会话内报告，

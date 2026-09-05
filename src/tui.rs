@@ -36,11 +36,8 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use crossterm::queue;
 use crossterm::style::{Color as XColor, Print, ResetColor, SetForegroundColor};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
-use ratatui::backend::CrosstermBackend;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io::Write;
 
 use crate::{call_llm_stream, config, endpoint_host, load_api_key, open_session_log, Prompts};
@@ -140,9 +137,9 @@ mod ui_text {
     pub const STATUS_BUSY: &str = "thinking [{kind}]…";
     pub const STATUS_READY: &str = "ready ({secs}s{tok})";
     pub const STATUS_READY_BUSY: &str = "{spinner} thinking · {chars} chars · esc quits";
-    pub const STATUS_READY_IDLE: &str =
-        "{status} · verdict: premortem/spec/postmortem · ctrl+up/down history · tab · esc";
-    pub const STATUS_READY_TYPING: &str = "{status} · tab completes · enter sends";
+    pub const STATUS_READY_IDLE_TAIL: &str =
+        " · verdict: premortem/spec/postmortem · ctrl+up/down history · tab · esc";
+    pub const STATUS_READY_TYPING_TAIL: &str = " · tab completes · enter sends";
 
     pub const CLEARED: &str =
         "[ok] cleared {n} remembered entries (the transcript above stays in scrollback)";
@@ -324,23 +321,15 @@ pub async fn run(
         return Err(e);
     }
     debug_log("raw mode enabled");
-    let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = match Terminal::with_options(
-        backend,
-        TerminalOptions {
-            viewport: Viewport::Inline(2),
-        },
-    )
-    .context("create inline terminal")
-    {
-        Ok(t) => t,
-        Err(e) => {
-            debug_log(&format!("inline terminal failed: {e:?}"));
-            disable_raw_mode().ok();
-            return Err(e);
-        }
-    };
-    debug_log("inline terminal created");
+    // The live rows start where the cursor is now; after the first
+    // transcript flush they pin to the bottom two rows.
+    state.viewport_top = crossterm::cursor::position()
+        .map(|p| p.1)
+        .unwrap_or_else(|_| {
+            crossterm::terminal::size()
+                .map(|s| s.1.saturating_sub(2))
+                .unwrap_or(0)
+        });
 
     let result = (|| -> Result<()> {
         let tick_rate = Duration::from_millis(50);
@@ -367,7 +356,8 @@ pub async fn run(
             // Print every finished entry to the terminal's scrollback —
             // one insert for the whole pending batch, so the boot banner
             // and resume replay don't flicker line by line.
-            if let Err(e) = flush_pending(&mut terminal, &mut state) {
+            let cursor_pos = state.cursor;
+            if let Err(e) = flush_pending(&mut state, &input, cursor_pos) {
                 debug_log(&format!("flush_pending failed: {e:?}"));
                 return Err(anyhow::anyhow!("scrollback flush: {e}"));
             }
@@ -380,19 +370,14 @@ pub async fn run(
                 return Ok(());
             }
 
-            // Render the two live rows (input + status)
-            if let Err(e) = terminal.draw(|f| {
-                render(f, &state, &input);
-            }) {
-                debug_log(&format!("terminal.draw failed: {e:?}"));
-                return Err(anyhow::anyhow!("terminal draw: {e}"));
-            }
-            // Native input row: ratatui drew only the ASCII prompt; the
-            // text prints here as one contiguous string (wide chars are
-            // rendered by the terminal, never as cell + follower space).
-            let screen = terminal.size()?;
-            let input_y = screen.height.saturating_sub(2);
-            let max_text = (screen.width as usize).saturating_sub(3);
+            // Draw the two live rows natively (input at viewport_top,
+            // status right below). All text is contiguous — wide chars
+            // render by the terminal, never as cell + follower space.
+            let (screen_w, screen_h) = crossterm::terminal::size()
+                .map(|s| (s.0 as usize, s.1 as usize))
+                .unwrap_or((80, 24));
+            let input_y = state.viewport_top.min(screen_h.saturating_sub(2) as u16);
+            let max_text = screen_w.saturating_sub(3);
             let (visible, prefix_w) = input_window(&input, state.cursor, max_text);
             queue!(
                 io::stdout(),
@@ -403,10 +388,18 @@ pub async fn run(
                 Print(&visible),
                 Clear(ClearType::UntilNewLine)
             )?;
+            let status = status_text(&state, &input);
+            queue!(
+                io::stdout(),
+                MoveTo(0, (input_y + 1).min(screen_h.saturating_sub(1) as u16)),
+                SetForegroundColor(XColor::DarkGrey),
+                Print(status),
+                Clear(ClearType::UntilNewLine)
+            )?;
             if state.busy {
                 queue!(io::stdout(), Hide)?;
             } else {
-                let cx = (2 + prefix_w).min(screen.width.saturating_sub(1) as usize) as u16;
+                let cx = (2 + prefix_w).min(screen_w.saturating_sub(1)) as u16;
                 queue!(io::stdout(), MoveTo(cx, input_y), Show)?;
             }
             io::stdout().flush()?;
@@ -685,6 +678,10 @@ struct TuiState {
     /// chars are one cursor step each. Full line editing: Left/Right/
     /// Home/End/Delete + insertion at the cursor.
     cursor: usize,
+    /// The terminal row of the live input line. Starts at the row where
+    /// the TUI was launched; after the first transcript flush it pins to
+    /// the bottom (h - 2). All live-row printing targets this row.
+    viewport_top: u16,
     /// Position in `input_history` while recalling. `None` = not recalling;
     /// typing any character cancels the recall.
     recall_idx: Option<usize>,
@@ -713,6 +710,7 @@ impl TuiState {
             model: config().model.clone(),
             input_history: Vec::new(),
             cursor: 0,
+            viewport_top: 0,
             recall_idx: None,
             session_path: None,
             flushed: 0,
@@ -796,6 +794,36 @@ fn input_window(input: &str, cursor: usize, max: usize) -> (String, usize) {
         }
         (out, 0)
     }
+}
+
+/// The dim status line under the input: liveness while busy, command
+/// cheat-sheet when idle. Pure so it is testable without a terminal.
+fn status_text(state: &TuiState, input: &str) -> String {
+    let spinner = SPINNER_FRAMES[(state.tick / 4) as usize % SPINNER_FRAMES.len()];
+    let base = if state.status.is_empty() {
+        "ready"
+    } else {
+        &state.status
+    };
+    if state.busy {
+        let chars = state
+            .streaming
+            .and_then(|idx| state.history.get(idx))
+            .map(|e| match e {
+                HistoryEntry::Ai(s) => s.chars().count().to_string(),
+                _ => String::new(),
+            })
+            .unwrap_or_default();
+        return ui_text::STATUS_READY_BUSY
+            .replace("{spinner}", spinner)
+            .replace("{chars}", &chars);
+    }
+    let tail = if input.is_empty() {
+        ui_text::STATUS_READY_IDLE_TAIL
+    } else {
+        ui_text::STATUS_READY_TYPING_TAIL
+    };
+    format!("{base}{tail}")
 }
 
 fn handle_key(key: KeyEvent, input: &mut String, state: &mut TuiState) -> KeyAction {
@@ -2205,78 +2233,6 @@ fn apply_event(state: &mut TuiState, evt: TuiEvent, sound_enabled: bool) {
     }
 }
 
-// ─── Render (two live rows) ────────────────────────────────────────────────────────────
-
-/// Render the only live region: row 0 is the input line (`> …`), row 1 the
-/// dim status line. Everything else in the conversation has already been
-/// printed to the terminal's scrollback by `flush_pending` — the transcript
-/// is not re-rendered here, ever.
-fn render(f: &mut ratatui::Frame, state: &TuiState, input: &str) {
-    let area = f.area();
-    if area.height < 2 || area.width < 8 {
-        return; // too small to be useful — avoid divide-by-weird layouts
-    }
-    let rows = ratatui::layout::Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: 1,
-    };
-    let status_row = ratatui::layout::Rect {
-        y: area.y + 1,
-        ..rows
-    };
-
-    // Input line: `> ` prompt + typed text, no box, no border.
-    // Input row: ratatui draws ONLY the ASCII prompt. The input text is
-    // printed natively right after draw() — one contiguous string, so
-    // wide chars (CJK) are rendered by the terminal itself and never hit
-    // the follower-space cell bug (a printed blank after every CJK char).
-
-    // Status line: everything here is metadata, so everything is dim.
-    // While busy, the spinner + live char count carry the liveness that
-    // streaming used to provide; idle, the line doubles as the command
-    // cheat-sheet so the verdict family is always discoverable.
-    let spinner = SPINNER_FRAMES[(state.tick / 4) as usize % SPINNER_FRAMES.len()];
-    let status_text = if state.busy {
-        let chars = state
-            .streaming
-            .and_then(|idx| state.history.get(idx))
-            .map(|e| match e {
-                HistoryEntry::Ai(s) => s.chars().count().to_string(),
-                _ => String::new(),
-            })
-            .unwrap_or_default();
-        ui_text::STATUS_READY_BUSY
-            .replace("{spinner}", spinner)
-            .replace("{chars}", &chars)
-    } else if input.is_empty() {
-        let s = if state.status.is_empty() {
-            "ready"
-        } else {
-            &state.status
-        };
-        ui_text::STATUS_READY_IDLE.replace("{status}", s)
-    } else {
-        let s = if state.status.is_empty() {
-            "ready"
-        } else {
-            &state.status
-        };
-        ui_text::STATUS_READY_TYPING.replace("{status}", s)
-    };
-    let status_line = Line::from(Span::styled(
-        format!(" {status_text}"),
-        Style::default().fg(MUTED),
-    ));
-    f.render_widget(Paragraph::new(status_line), status_row);
-
-    // Cursor at the end of the typed input, on row 0. While busy the
-    // cursor is hidden — there is nothing to type into.
-    // Cursor placement happens natively after draw() — it must track the
-    // editable cursor position inside the visible window, not the row end.
-}
-
 // ─── Scrollback flush ──────────────────────────────────────────────────────────────────
 
 /// Flatten a styled line into a (style, char) stream — the raw material
@@ -2387,13 +2343,14 @@ fn wrap_entry_lines(lines: &[Line<'_>], width: usize) -> Vec<Line<'static>> {
     out
 }
 
-/// Print every finished history entry to the terminal's scrollback with a
-/// single `insert_before` per batch. The in-flight streaming entry stays
-/// unflushed until its `Result` event finalizes it.
-fn flush_pending(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    state: &mut TuiState,
-) -> Result<()> {
+/// Print every finished history entry — RELATIVE to the live input row,
+/// never at absolute screen coordinates. Each row is one contiguous
+/// `Print` (pre-wrapped to fit, styles preserved) followed by a newline
+/// that lets the terminal scroll naturally. The two live rows are
+/// reprinted right after, so nothing is lost and nothing lands in the
+/// wrong place. This is the fix for the v0.6.0 blank-gap + truncation
+/// bugs: no absolute positioning, no ratatui cell layer for text.
+fn flush_pending(state: &mut TuiState, input: &str, cursor: usize) -> Result<()> {
     // One past the last entry we may flush: the streaming entry, if any,
     // is still being written by Delta events.
     let limit = match state.streaming {
@@ -2404,15 +2361,15 @@ fn flush_pending(
         return Ok(());
     }
 
-    let width = terminal.size().map(|s| s.width as usize).unwrap_or(80);
-    if width == 0 {
+    let (width, screen_h) = crossterm::terminal::size()
+        .map(|s| (s.0 as usize, s.1 as usize))
+        .unwrap_or((80, 24));
+    if width == 0 || screen_h < 3 {
         return Ok(());
     }
 
     // Pre-wrap every logical line into exact physical rows. Because each
-    // row fits `width` columns, the terminal never re-wraps our output:
-    // inserted row count == visible row count, so nothing is clipped and
-    // no blank gaps appear. Styles ride along on the spans.
+    // row fits `width` columns, the terminal never re-wraps our output.
     let mut rows: Vec<Line<'static>> = Vec::new();
     for entry in &state.history[state.flushed..limit] {
         let logical = entry_to_lines(entry);
@@ -2423,49 +2380,60 @@ fn flush_pending(
         return Ok(());
     }
 
-    // Two-phase print. Phase 1 (ratatui): reserve the space above the
-    // viewport — insert_before owns the scroll bookkeeping. The buffer is
-    // left EMPTY on purpose: letting ratatui print the cells would emit a
-    // blank after every wide char (set_stringn resets the follower cell,
-    // and insert_before's draw_lines path prints every cell without the
-    // diff skip logic) — the reported CJK gaps.
-    //
-    // Phase 2 (native): each pre-wrapped row is ONE contiguous Print, so
-    // the terminal renders wide chars itself. No MoveTo between CJK chars,
-    // no follower cells, no gaps — and verdict colors ride on spans.
-    for chunk in rows.chunks(4_096) {
-        let height = chunk.len() as u16;
-        terminal.insert_before(height, |_buf| {})?;
-
-        let screen_h = terminal.size()?.height;
-        let top = screen_h.saturating_sub(2).saturating_sub(height);
-        for (i, row) in chunk.iter().enumerate() {
-            queue!(io::stdout(), MoveTo(0, top + i as u16))?;
-            for span in &row.spans {
-                match span.style.fg {
-                    Some(ACCENT_RED) => {
-                        queue!(
-                            io::stdout(),
-                            SetForegroundColor(XColor::Red),
-                            Print(span.content.as_ref())
-                        )?;
-                    }
-                    Some(MUTED) => {
-                        queue!(
-                            io::stdout(),
-                            SetForegroundColor(XColor::DarkGrey),
-                            Print(span.content.as_ref())
-                        )?;
-                    }
-                    _ => {
-                        queue!(io::stdout(), Print(span.content.as_ref()))?;
-                    }
+    // Print starting at the live input row; each row ends with a newline
+    // that scrolls the screen naturally when at the bottom. The last two
+    // transcript rows land on the live rows — reprinted immediately after.
+    queue!(io::stdout(), MoveTo(0, state.viewport_top))?;
+    for row in &rows {
+        for span in &row.spans {
+            match span.style.fg {
+                Some(ACCENT_RED) => {
+                    queue!(
+                        io::stdout(),
+                        SetForegroundColor(XColor::Red),
+                        Print(span.content.as_ref())
+                    )?;
+                }
+                Some(MUTED) => {
+                    queue!(
+                        io::stdout(),
+                        SetForegroundColor(XColor::DarkGrey),
+                        Print(span.content.as_ref())
+                    )?;
+                }
+                _ => {
+                    queue!(io::stdout(), Print(span.content.as_ref()))?;
                 }
             }
-            queue!(io::stdout(), ResetColor)?;
         }
-        io::stdout().flush()?;
+        queue!(io::stdout(), Print("\r\n"))?;
     }
+
+    // Reprint the two live rows at the bottom.
+    let new_top = (state.viewport_top as usize + rows.len()).min(screen_h.saturating_sub(2)) as u16;
+    let max_text = width.saturating_sub(3);
+    let (visible, _prefix_w) = input_window(input, cursor, max_text);
+    queue!(
+        io::stdout(),
+        MoveTo(0, new_top),
+        SetForegroundColor(XColor::DarkGrey),
+        Print("> "),
+        ResetColor,
+        Print(&visible),
+        Clear(ClearType::UntilNewLine)
+    )?;
+    let status = status_text(state, input);
+    queue!(
+        io::stdout(),
+        MoveTo(0, new_top + 1),
+        SetForegroundColor(XColor::DarkGrey),
+        Print(status),
+        Clear(ClearType::UntilNewLine),
+        ResetColor
+    )?;
+    io::stdout().flush()?;
+
+    state.viewport_top = new_top;
     Ok(())
 }
 

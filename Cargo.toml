@@ -1,6 +1,6 @@
 [package]
 name = "naysay"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 description = "The voice that says no before your coding agents say yes — seed, drill, premortem, spec in your terminal"
 license = "MIT"
@@ -23,3 +23,6 @@ keyring = "3"
 ratatui = "0.29"
 crossterm = "0.28"
 toml = "0.8"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

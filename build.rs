@@ -1,5 +1,6 @@
-//! Capture git metadata at build time so `naysay --version` can show it.
-//! Falls back to "unknown" when git is unavailable (e.g. release tarball, CI cache).
+//! Build-time metadata:
+//! 1. Git info for `naysay --version` (falls back to "unknown" outside a repo).
+//! 2. Windows executable icon + version resource (assets/naysay.ico).
 
 use std::process::Command;
 
@@ -22,7 +23,30 @@ fn main() {
 
     // Only rerun if HEAD changes.
     println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=assets/naysay.ico");
 
     println!("cargo:rustc-env=NAYSAY_GIT_HASH={hash}");
     println!("cargo:rustc-env=NAYSAY_GIT_TAG={tag}");
+
+    // Windows: embed the icon + version info into the .exe. Skipped on
+    // other platforms — the icon is a Windows Explorer concern.
+    if std::env::var("CARGO_CFG_WINDOWS").is_ok() {
+        if !std::path::Path::new("assets/naysay.ico").exists() {
+            println!("cargo:warning=assets/naysay.ico missing — exe will have no icon");
+            return;
+        }
+        match winresource::WindowsResource::new()
+            .set_icon("assets/naysay.ico")
+            .set("FileDescription", &format!("naysay v{}", env!("CARGO_PKG_VERSION")))
+            .set("ProductName", "naysay")
+            .compile()
+        {
+            Ok(()) => {}
+            Err(e) => {
+                // A missing/broken resource toolchain must not kill the build —
+                // the icon is cosmetic.
+                println!("cargo:warning=icon embedding skipped: {e}");
+            }
+        }
+    }
 }
