@@ -792,11 +792,8 @@ pub(crate) fn memory_context_block(dir: &std::path::Path, idea: &str) -> Option<
          These are records of what was actually decided:\n",
     );
     for (score, r) in scored.iter().take(3) {
-        let age = now.saturating_sub(r.ts) / 86_400;
-        out.push_str(&format!(
-            "- {}-{} ({}d ago, relevance {:.2}) idea: \"{}\"\n",
-            r.kind, r.id, age, score, r.idea
-        ));
+        out.push_str(&memory_row(r, now));
+        out.push_str(&format!("  (relevance {score:.2})\n"));
         if let Some(v) = &r.verdict {
             out.push_str(&format!("  prior VERDICT: {v}\n"));
         }
