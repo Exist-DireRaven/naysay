@@ -631,7 +631,7 @@ pub(crate) fn register_assumptions(
             });
         }
     }
-    reg.sort_by(|a, b| a.ts_first.cmp(&b.ts_first));
+    reg.sort_by_key(|a| a.ts_first);
     save_registry(dir, &reg)
 }
 
