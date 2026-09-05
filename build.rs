@@ -28,28 +28,37 @@ fn main() {
     println!("cargo:rustc-env=NAYSAY_GIT_HASH={hash}");
     println!("cargo:rustc-env=NAYSAY_GIT_TAG={tag}");
 
-    // Windows: embed the icon + version info into the .exe. Skipped on
-    // other platforms — the icon is a Windows Explorer concern.
-    if std::env::var("CARGO_CFG_WINDOWS").is_ok() {
-        if !std::path::Path::new("assets/naysay.ico").exists() {
-            println!("cargo:warning=assets/naysay.ico missing — exe will have no icon");
-            return;
-        }
-        match winresource::WindowsResource::new()
-            .set_icon("assets/naysay.ico")
-            .set(
-                "FileDescription",
-                &format!("naysay v{}", env!("CARGO_PKG_VERSION")),
-            )
-            .set("ProductName", "naysay")
-            .compile()
-        {
-            Ok(()) => {}
-            Err(e) => {
-                // A missing/broken resource toolchain must not kill the build —
-                // the icon is cosmetic.
-                println!("cargo:warning=icon embedding skipped: {e}");
-            }
+    embed_windows_resources();
+}
+
+/// Windows: embed the icon + version info into the .exe. Skipped on other
+/// platforms — the icon is a Windows Explorer concern. The `#[cfg(windows)]`
+/// gate is COMPILE-time: `winresource` is a Windows-only build-dependency,
+/// so referencing it unconditionally breaks Linux/macOS build scripts
+/// (found by the v0.6.1 release CI).
+#[cfg(windows)]
+fn embed_windows_resources() {
+    if !std::path::Path::new("assets/naysay.ico").exists() {
+        println!("cargo:warning=assets/naysay.ico missing — exe will have no icon");
+        return;
+    }
+    match winresource::WindowsResource::new()
+        .set_icon("assets/naysay.ico")
+        .set(
+            "FileDescription",
+            &format!("naysay v{}", env!("CARGO_PKG_VERSION")),
+        )
+        .set("ProductName", "naysay")
+        .compile()
+    {
+        Ok(()) => {}
+        Err(e) => {
+            // A missing/broken resource toolchain must not kill the build —
+            // the icon is cosmetic.
+            println!("cargo:warning=icon embedding skipped: {e}");
         }
     }
 }
+
+#[cfg(not(windows))]
+fn embed_windows_resources() {}
