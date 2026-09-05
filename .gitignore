@@ -16,3 +16,5 @@ naysay-*.md
 pair-*.md
 # release notes snapshot (regenerated per tag, see CONTRIBUTING)
 RELEASE_NOTES.md
+_i18n.py
+_patch_*.py
