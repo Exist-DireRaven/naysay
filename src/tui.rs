@@ -52,28 +52,34 @@ use crate::{call_llm_stream, config, endpoint_host, load_api_key, open_session_l
 /// users. This is the same heuristic every terminal emulator uses for
 /// cursor placement; we don't pull in `unicode-width` because a narrow
 /// inline range check covers 99% of real prompts.
-fn display_width(text: &str) -> usize {
-    let mut w = 0usize;
-    for c in text.chars() {
-        let cp = c as u32;
-        let wide = (0x1100..=0x115F).contains(&cp)        // Hangul Jamo
-            || (0x2E80..=0x303E).contains(&cp)             // CJK Radicals + Symbols
-            || (0x3041..=0x33FF).contains(&cp)             // Hiragana, Katakana, CJK symbols
-            || (0x3400..=0x4DBF).contains(&cp)             // CJK Extension A
-            || (0x4E00..=0x9FFF).contains(&cp)             // CJK Unified Ideographs
-            || (0xA000..=0xA4CF).contains(&cp)             // Yi
-            || (0xAC00..=0xD7A3).contains(&cp)             // Hangul Syllables
-            || (0xF900..=0xFAFF).contains(&cp)             // CJK Compatibility
-            || (0xFE30..=0xFE4F).contains(&cp)             // CJK Compatibility Forms
-            || (0xFF00..=0xFF60).contains(&cp)             // Fullwidth Forms
-            || (0xFFE0..=0xFFE6).contains(&cp)             // Fullwidth signs
-            || (0x20000..=0x2FFFD).contains(&cp)          // CJK Ext B–F + supplement
-            || (0x30000..=0x3FFFD).contains(&cp);
-        w += if wide { 2 } else { 1 };
+/// Display width of one character. CJK ideographs, kana, Hangul and
+/// fullwidth punctuation are 2 columns; everything else is 1. Same
+/// accounting real terminals use for cursor placement and wrapping.
+fn char_width(c: char) -> usize {
+    let cp = c as u32;
+    let wide = (0x1100..=0x115F).contains(&cp)        // Hangul Jamo
+        || (0x2E80..=0x303E).contains(&cp)             // CJK Radicals + Symbols
+        || (0x3041..=0x33FF).contains(&cp)             // Hiragana, Katakana, CJK symbols
+        || (0x3400..=0x4DBF).contains(&cp)             // CJK Extension A
+        || (0x4E00..=0x9FFF).contains(&cp)             // CJK Unified Ideographs
+        || (0xA000..=0xA4CF).contains(&cp)             // Yi
+        || (0xAC00..=0xD7A3).contains(&cp)             // Hangul Syllables
+        || (0xF900..=0xFAFF).contains(&cp)             // CJK Compatibility
+        || (0xFE30..=0xFE4F).contains(&cp)             // CJK Compatibility Forms
+        || (0xFF00..=0xFF60).contains(&cp)             // Fullwidth Forms
+        || (0xFFE0..=0xFFE6).contains(&cp)             // Fullwidth signs
+        || (0x20000..=0x2FFFD).contains(&cp)          // CJK Ext B-F + supplement
+        || (0x30000..=0x3FFFD).contains(&cp);
+    if wide {
+        2
+    } else {
+        1
     }
-    w
 }
 
+fn display_width(text: &str) -> usize {
+    text.chars().map(char_width).sum()
+}
 /// Append one line to the session debug log. Best-effort — never panics,
 /// never blocks. Used to diagnose "TUI flashed and exited" issues.
 fn debug_log(msg: &str) {
@@ -2124,9 +2130,13 @@ fn render(f: &mut ratatui::Frame, state: &TuiState, input: &str) {
     };
 
     // Input line: `> ` prompt + typed text, no box, no border.
+    // Keep the tail of the input visible when it overflows the row: show
+    // the last `max_text` display columns instead of clipping the end.
+    let max_text = (area.width as usize).saturating_sub(3);
+    let visible = tail_by_display_width(input, max_text);
     let input_line = Line::from(vec![
         Span::styled("> ", Style::default().fg(MUTED)),
-        Span::raw(input.to_string()),
+        Span::raw(visible.clone()),
     ]);
     f.render_widget(Paragraph::new(input_line), rows);
 
@@ -2171,32 +2181,143 @@ fn render(f: &mut ratatui::Frame, state: &TuiState, input: &str) {
     // Cursor at the end of the typed input, on row 0. While busy the
     // cursor is hidden — there is nothing to type into.
     if !state.busy {
-        // Display columns, not char count — CJK chars are 2 columns wide.
-        let offset = 2 + display_width(input) as u16;
-        let x = (area.x + offset).min(area.x + area.width.saturating_sub(1));
+        // Display columns, not char count — CJK chars are 2 columns wide —
+        // measured against the VISIBLE tail, not the full input.
+        let x = (area.x + 2 + display_width(&visible) as u16)
+            .min(area.x + area.width.saturating_sub(1));
         f.set_cursor_position(Position::new(x, area.y));
     }
 }
 
 // ─── Scrollback flush ──────────────────────────────────────────────────────────────────
 
-/// Estimated terminal-row height of `line` when wrapped at `width`
-/// columns. Uses `display_width`, so CJK text wraps on the same accounting
-/// ratatui and real terminals use. Empty lines still take one row.
-fn line_height(line: &Line<'_>, width: u16) -> u16 {
-    if width == 0 {
-        return 1;
+/// Flatten a styled line into a (style, char) stream — the raw material
+/// for wrapping.
+fn flatten_line(line: &Line<'_>) -> Vec<(Style, char)> {
+    let mut out = Vec::new();
+    for span in &line.spans {
+        for ch in span.content.as_ref().chars() {
+            out.push((span.style, ch));
+        }
     }
-    let w: usize = line
-        .spans
-        .iter()
-        .map(|sp| display_width(sp.content.as_ref()))
-        .sum();
-    if w == 0 {
-        1
+    out
+}
+
+/// Rebuild one owned row from a (style, char) slice, merging adjacent
+/// same-style chars into spans.
+fn row_from(chars: &[(Style, char)]) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut cur_style: Option<Style> = None;
+    let mut cur = String::new();
+    for (style, ch) in chars {
+        match cur_style {
+            Some(ref s) if *s == *style => cur.push(*ch),
+            _ => {
+                if !cur.is_empty() {
+                    let st = cur_style.take().unwrap_or_default();
+                    spans.push(Span::styled(std::mem::take(&mut cur), st));
+                }
+                cur_style = Some(*style);
+                cur.push(*ch);
+            }
+        }
+    }
+    if !cur.is_empty() {
+        let st = cur_style.take().unwrap_or_default();
+        spans.push(Span::styled(cur, st));
+    }
+    if spans.is_empty() {
+        Line::from("")
     } else {
-        (w as u16).div_ceil(width).max(1)
+        Line::from(spans)
     }
+}
+
+/// Word-aware wrap of one logical line into physical rows that each fit
+/// `width` display columns (styles preserved). Rows are emitted exactly as
+/// they will be seen: the terminal never re-wraps them, so the inserted
+/// row count equals the visible row count — no clipped tails, no gaps.
+///
+/// Long unbreakable runs (URLs, CJK without spaces) hard-split at the
+/// column boundary, which is what terminals do too.
+fn wrap_line_to_width(line: &Line<'_>, width: usize) -> Vec<Line<'static>> {
+    let chars = flatten_line(line);
+    if width == 0 {
+        return vec![row_from(&chars)];
+    }
+    let n = chars.len();
+    if n == 0 {
+        return vec![Line::from("")];
+    }
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let mut i = 0usize;
+    while i < n {
+        let mut w = 0usize;
+        let mut j = i;
+        // Most recent wrap candidate: a space fully consumed by this row.
+        let mut break_at: Option<usize> = None;
+        while j < n {
+            let cw = char_width(chars[j].1);
+            if w + cw > width {
+                break;
+            }
+            w += cw;
+            j += 1;
+            if chars[j - 1].1 == ' ' && j < n && w < width {
+                break_at = Some(j);
+            }
+        }
+        let end = if j >= n {
+            n
+        } else if let Some(b) = break_at {
+            if b > i {
+                b
+            } else {
+                j
+            }
+        } else if j > i {
+            j
+        } else {
+            // A single char wider than the whole row: hard-advance one.
+            i + 1
+        };
+        out.push(row_from(&chars[i..end]));
+        i = end;
+    }
+    out
+}
+
+/// Wrap every logical line of an entry into exact physical rows.
+fn wrap_entry_lines(lines: &[Line<'_>], width: usize) -> Vec<Line<'static>> {
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for l in lines {
+        out.extend(wrap_line_to_width(l, width));
+    }
+    if out.is_empty() {
+        out.push(Line::from(""));
+    }
+    out
+}
+
+/// Tail of `text` that fits in `max` display columns (walking from the
+/// end). Used to keep the input row's cursor and text visible when the
+/// user types past the terminal width.
+fn tail_by_display_width(text: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
+    let mut w = 0usize;
+    let mut start = 0usize;
+    for (idx, ch) in text.char_indices().rev() {
+        let cw = char_width(ch);
+        if w + cw > max {
+            start = idx + ch.len_utf8();
+            break;
+        }
+        w += cw;
+        start = idx;
+    }
+    text[start..].to_string()
 }
 
 /// Print every finished history entry to the terminal's scrollback with a
@@ -2216,36 +2337,33 @@ fn flush_pending(
         return Ok(());
     }
 
-    let width = terminal.size().map(|s| s.width).unwrap_or(80);
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    for entry in &state.history[state.flushed..limit] {
-        lines.extend(entry_to_lines(entry));
-    }
-    // u16::MAX ≈ 65k rows ≈ 900 screens — no realistic transcript hits the
-    // ceiling. Accumulate in u32 and saturate so a pathological log degrades
-    // to a clipped insert instead of an overflow panic.
-    let height: u16 = lines
-        .iter()
-        .map(|l| line_height(l, width) as u32)
-        .sum::<u32>()
-        .min(u16::MAX as u32) as u16;
-    if height == 0 {
-        state.flushed = limit;
+    let width = terminal.size().map(|s| s.width as usize).unwrap_or(80);
+    if width == 0 {
         return Ok(());
     }
 
-    let x = 0u16;
-    terminal
-        .insert_before(height, |buf| {
-            let mut y = 0u16;
-            for line in &lines {
-                let h = line_height(line, width);
-                buf.set_line(x, y, line, width);
-                y += h;
-            }
-        })
-        .context("insert transcript into scrollback")?;
+    // Pre-wrap every logical line into exact physical rows. Because each
+    // row fits `width` columns, the terminal never re-wraps our output:
+    // inserted row count == visible row count, so nothing is clipped and
+    // no blank gaps appear. Styles ride along on the spans.
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for entry in &state.history[state.flushed..limit] {
+        let logical = entry_to_lines(entry);
+        rows.extend(wrap_entry_lines(&logical, width));
+    }
     state.flushed = limit;
+
+    // Chunks keep every insert's row count comfortably inside u16.
+    for chunk in rows.chunks(8_192) {
+        let height = chunk.len() as u16;
+        terminal
+            .insert_before(height, |buf| {
+                for (y, line) in chunk.iter().enumerate() {
+                    buf.set_line(0, y as u16, line, width as u16);
+                }
+            })
+            .context("insert transcript into scrollback")?;
+    }
     Ok(())
 }
 
@@ -2257,7 +2375,9 @@ fn flush_pending(
 /// negatives lose a bit of emphasis, false positives turn unrelated text
 /// into noise.
 fn is_verdict_line(line: &str) -> bool {
-    let t = line.trim_start();
+    // Models often emit "**5. Verdict**" or "## Verdict" — markdown
+    // emphasis must not hide the verdict from the red accent.
+    let t = line.trim_start().trim_start_matches(['*', '#', '>', ' ']);
     let lower = t.to_lowercase();
     lower.starts_with("verdict")
         || lower.starts_with("5.")
@@ -2557,6 +2677,92 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("naysay-dir-none-{}", std::process::id()));
         assert!(collect_dir_files(&dir, 1000).is_empty());
         assert!(collect_dir_files(&dir.join("a.rs"), 1000).is_empty());
+    }
+
+    // ─── wrap_line_to_width (scrollback truncation fix) ────────────────────────
+
+    fn row_text(l: &Line<'static>) -> String {
+        l.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn wrap_english_word_boundary_no_row_exceeds_width() {
+        // The exact reported bug: a 130+ char line in a ~100-col terminal
+        // used to be clipped mid-sentence by the height estimate.
+        let line = Line::from("The premise is a voice in the terminal that says no before coding agents say yes. Six months out, it's dead. Here's the autopsy:");
+        let rows = wrap_line_to_width(&line, 100);
+        assert!(rows.len() >= 2, "must wrap to multiple rows");
+        for r in &rows {
+            assert!(
+                display_width(&row_text(r)) <= 100,
+                "row too wide: {:?}",
+                row_text(r)
+            );
+        }
+        let joined = rows
+            .iter()
+            .map(|r| format!("{} ", row_text(r)))
+            .collect::<String>();
+        assert!(joined.contains("autopsy:"), "tail lost: {joined}");
+    }
+
+    #[test]
+    fn wrap_cjk_counts_two_columns_per_char() {
+        let line = Line::from("做个知乎热榜爬虫并且支持多种数据源");
+        let rows = wrap_line_to_width(&line, 11);
+        for r in &rows {
+            assert!(display_width(&row_text(r)) <= 11, "{:?}", row_text(r));
+        }
+        let total: usize = rows.iter().map(|r| display_width(&row_text(r))).sum();
+        assert_eq!(total, 34);
+    }
+
+    #[test]
+    fn wrap_long_unbroken_word_hard_splits() {
+        let line = Line::from("aaaaaaaaaaaaaaaaaaaa"); // 20 chars, width 8
+        let rows = wrap_line_to_width(&line, 8);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(row_text(&rows[0]), "aaaaaaaa");
+        assert_eq!(row_text(&rows[2]), "aaaa");
+    }
+
+    #[test]
+    fn wrap_preserves_styles_across_rows() {
+        let line = Line::from(vec![
+            Span::styled("VERDICT: ".to_string(), Style::default().fg(ACCENT_RED)),
+            Span::raw("build the smallest version and then keep going with more text to force a wrap here"),
+        ]);
+        let rows = wrap_line_to_width(&line, 40);
+        let red_rows = rows
+            .iter()
+            .filter(|r| r.spans.iter().any(|s| s.style.fg == Some(ACCENT_RED)))
+            .count();
+        assert!(red_rows >= 1, "styled span lost in wrap");
+        let joined = rows.iter().map(|r| row_text(r)).collect::<String>();
+        assert!(joined.contains("force a wrap here"));
+    }
+
+    #[test]
+    fn wrap_empty_line_is_exactly_one_empty_row() {
+        let rows = wrap_line_to_width(&Line::from(""), 80);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(row_text(&rows[0]), "");
+    }
+
+    #[test]
+    fn tail_by_display_width_keeps_cursor_end_visible() {
+        assert_eq!(tail_by_display_width("hello", 10), "hello");
+        assert_eq!(tail_by_display_width("hello world", 5), "world");
+        // CJK: 2 columns each — with max 4, only the last 2 chars fit.
+        assert_eq!(tail_by_display_width("做个爬虫", 4), "爬虫");
+    }
+
+    #[test]
+    fn verdict_survives_markdown_emphasis() {
+        assert!(is_verdict_line("**5. Verdict**"));
+        assert!(is_verdict_line("## Verdict"));
+        assert!(is_verdict_line("  **5. Verdict: BUILD**"));
+        assert!(!is_verdict_line("**2. Ranked killers**"));
     }
 
     #[test]

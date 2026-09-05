@@ -16,6 +16,35 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.5.1 — 2026-09-05
+
+#### Fixed
+
+- **Clipped, gapped transcript (the serious one).** The inline
+  transcript estimated wrapped row heights with `ceil(columns / width)`
+  and inserted that many rows — but real terminals wrap at word
+  boundaries, so every long line lost its tail and mis-estimates left
+  blank gaps. The transcript now **pre-wraps** each logical line into
+  exact physical rows (word-aware, display-width based, style
+  preserving, CJK correct) before inserting: inserted row count ==
+  visible row count, always. Found by a user whose premortem output
+  was visibly shredded.
+- **Input overflow.** Typing past the terminal width used to hide the
+  end of the input; the row now shows the tail (cursor stays on it).
+- **Verdict highlight survived markdown.** `**5. Verdict**` and
+  `## Verdict` now light up red like the plain forms.
+- **Zombie process hygiene**: a smoke-test TUI left running held the
+  release binary lock; release builds now fail with a clear culprit
+  instead of a mystery.
+
+#### Added
+
+- 7 unit tests: word-boundary wrap (incl. the exact reported
+  130-char case), CJK 2-column accounting, long-word hard split,
+  style preservation across rows, empty-line row count,
+  input tail-scroll, verdict-under-markdown. Total: 78.
+
+---
 ### naysay v0.5.0 — 2026-09-05
 
 The archive becomes memory. One theme: past decisions start shaping
@@ -314,6 +343,30 @@ First naysay release. Built on pair v1.3.
 
 ## 中文
 
+### naysay v0.5.1 — 2026-09-05
+
+#### 修复
+
+- **转录稿被截断 + 出现空隙(严重)。** 行内转录用
+  `ceil(列数 / 宽度)` 估算换行行数再插入——但真实终端按词边界
+  换行，于是每行长句丢尾巴，估算偏差留下空行。现在转录稿
+  **预换行**：按显示宽度做词感知切分(保留样式、CJK 按 2 列)，
+  切成精确物理行再插入——插入行数 == 可见行数，永远一致。
+  发现者是一位 premortem 输出被明显撕碎的用户。
+- **输入溢出。** 输入超过终端宽度时行尾被藏住；现在显示尾部
+  (光标跟随)。
+- **判决高亮穿过 markdown。** `**5. Verdict**` 和 `## Verdict`
+  与普通形式一样变红。
+- **僵尸进程卫生**：冒烟测试留下的 TUI 占着 release 二进制的锁；
+  现在构建失败会给出明确元凶而非谜团。
+
+#### 新增
+
+- 7 个单元测试：词边界换行(含被报告的 130 字符真实案例)、CJK
+  双列记账、超长词硬切、跨行样式保留、空行行数、输入尾部滚动、
+  markdown 下的判决匹配。总数:78。
+
+---
 ### naysay v0.5.0 — 2026-09-05
 
 档案变成记忆。一个主题：过去的决定开始影响现在的决定。形状来自
