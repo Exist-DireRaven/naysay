@@ -189,7 +189,8 @@ tool. If you can't, that's the part to study next.
 
 | symbol | what it does |
 |--------|--------------|
-| `handle_key` | All key handling. Plain chars → input. Backspace / Enter / Esc / Tab / Ctrl+S / Ctrl+C / `r`. While busy: only quit keys (the terminal owns scrolling). |
+| `handle_key` | All key handling. Cursor-addressable editing: chars insert at `state.cursor`, Backspace/Delete/←/→/Home/End, Enter submits. While busy: only quit keys. |
+| `byte_index_of_char` / `input_window` | Char-index → byte offset for cursor ops; the visible input window (pins to the cursor on overflow, display-width based). |
 | `apply_completion` | Tab completion on first word. First Tab: longest-common-prefix extension. Repeated Tab: cycle through candidates. |
 | `longest_common_prefix` | Helper. |
 | `submit_line` | Dispatch a command. Routes to `help` / `/context` / `/clear` / `/model` / `/resume [file]` / the curated command map, else freeform. `@path` inlining before send. Every submission lands in `input_history` and the session log; an LLM response is logged on `Result(Ok)`. Spawns an async task that does the LLM call and pushes `Delta` events into `tx`. |
@@ -223,8 +224,8 @@ tool. If you can't, that's the part to study next.
 
 | symbol | what it does |
 |--------|--------------|
-| `render` | Draws the two-row live strip only: `> ` input row + dim status row (spinner + char count while busy, command cheat-sheet when idle). Places the cursor at the end of typed input (display-width aware). History is never re-rendered here — it lives in scrollback. |
-| `flush_pending` | Prints every finished history entry to the terminal's scrollback via `insert_before`, one batch per frame. The in-flight streaming entry stays unflushed until its `Result` event finalizes it. |
+| `render` | Draws the two-row live strip: ASCII `> ` prompt + dim status row. The input TEXT is printed natively after draw — ratatui never renders wide chars on the live path. |
+| `flush_pending` | Two-phase print: ratatui `insert_before` reserves blank rows above the viewport (owns scrolling), then each pre-wrapped row prints as ONE contiguous crossterm `Print` with span colors — wide chars render natively, no follower-space gaps. In-flight streaming entry flushes on its `Result` event. |
 | `line_height` | Estimated wrapped row count of a Line at a given width (display_width-based, so CJK wraps on the same accounting terminals use). Drives insert heights. |
 | `entry_to_lines` | One `HistoryEntry` → `Vec<Line<'_>>` for the scrollback transcript. User turns as `> cmd`, AI turns verbatim with verdict lines in red, errors prefixed `!`, info dim. |
 | `apply_event` | Apply a `TuiEvent` to state. `Delta` → append to the streaming entry. `Result` → finalize, set elapsed, clear busy. |
