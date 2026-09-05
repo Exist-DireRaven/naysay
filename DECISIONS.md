@@ -425,3 +425,52 @@ Any new D-entry in this file proposing a feature in v0.2–v0.4 must
 identify which rejected item (if any) it competes with. If the
 proposal does not say what it displaces, it is by default
 rejected.
+
+## D-020 · v0.2 — Structured output, zero new surface (2026-09-05)
+
+**Decision:** For v0.2, expand the existing commands' prompt templates
+with structured sections (`ASSUMPTIONS / EVIDENCE / UNKNOWNS / CONFIDENCE`
+in premortem; `Failure Conditions / Risk Budget` in spec;
+`CALIBRATION` in postmortem). Do **not** add new CLI commands, new flags,
+new files, new dependencies, or new types. CLI surface unchanged.
+
+**Why:**
+1. D-019 promised "v0.2 — structured decisions. The CLI surface does
+   not grow; the structured output becomes parseable by the user's
+   tools. No new UI." This commit is the literal execution of that
+   promise. Anything that grows the CLI in v0.2 violates it.
+2. The value of structured output is in the **contract** with the
+   user, not in the implementation. A user who wants to grep
+   `^CONFIDENCE` in a saved spec can do that today, with no
+   schema, no parser, no new code.
+3. The risk of v0.2 is the same as every other v0.x: premature
+   abstraction. Adding a `Decision` type with serde derives, a TOML
+   schema for prompts, an MCP server, all of these are easy to write
+   and wrong to ship before anyone has actually parsed an
+   `ASSUMPTIONS` block. Do the boring thing first.
+4. The trade-off is real: the LLM may format things inconsistently.
+   That is acceptable — the contract is "the LLM will try this
+   format", not "the format is guaranteed". A user who needs
+   machine-readable output is using `--json`, which already exists.
+
+**Trade-off:** If the LLM produces malformed structured output,
+downstream parsing breaks silently. The mitigation is in v0.3:
+decision memory that re-validates each structured block on write.
+
+### What v0.2 ships (in this commit)
+
+- `premortem` output now ends with an `ASSUMPTIONS / EVIDENCE / UNKNOWNS /
+  CONFIDENCE` block, in addition to the existing autopsy sections.
+- `spec` output now includes `Assumptions / Failure Conditions / Risk
+  Budget`, in addition to existing sections.
+- `postmortem` output now ends with a `CALIBRATION` block.
+
+### What v0.2 deliberately does not ship
+
+- No new command, no new flag, no new file beyond
+  `examples/002-*.md` and this decision log.
+- No new dependency.
+- No new type. The model is still called with `&[Message]`, returns
+  `Result<String>`. Output is still a String with newlines.
+- No change to the public JSON schema for `--json` (yet — that lands
+  when at least three real users need it).

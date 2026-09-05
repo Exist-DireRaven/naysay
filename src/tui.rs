@@ -1457,6 +1457,18 @@ async fn run_postmortem<F: FnMut(&str) + Send>(
          5. Decision-log entry — 3-5 lines in markdown, self-contained, \
          written to paste into a DECISIONS.md: what was tried, what \
          happened, what to do differently next time.\n\n\
+\n\
+         After the postmortem, add a short CALIBRATION section:\n\n\
+\n\
+         CALIBRATION — if a premortem was run for this project, did the \
+         verdict hold? If you said BUILD and it was killed, or KILL and \
+         it shipped, that is the most useful sentence in this whole \
+         document. One paragraph: what was the original confidence, \
+         what actually happened, and what the gap teaches about the \
+         premortem process itself. If no premortem exists, name two \
+         things you would have warned against that the project proved \
+         right about.\n\n\
+\n\
          Be specific to this project. Blame decisions, not people.";
     let template = prompts.get("postmortem", DEFAULT);
     let prompt = template.replace("{idea}", idea);

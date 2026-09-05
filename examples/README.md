@@ -8,6 +8,7 @@ not a thought experiment.
 /examples
 
 001-flowforge.md     ❌ the predecessor that became naysay
+002-ai-calendar.md    ❌ a calendar that almost shipped
 ```
 
 Convention: each file contains

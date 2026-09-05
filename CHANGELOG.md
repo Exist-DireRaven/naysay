@@ -240,6 +240,44 @@ First naysay release. Built on pair v1.3.
 
 ---
 
+## naysay v0.2.0 — 2026-09-05
+
+Structured output, zero new surface. Same six commands, same six
+prompts, same CLI — only the prompt templates grow.
+
+### Changed
+
+- **`premortem` now ends with a structured section** in addition to
+  the existing autopsy:
+  - `ASSUMPTIONS` — 3–5 things the build depends on being true, each
+    specific enough to be wrong.
+  - `EVIDENCE` — for each assumption, what would prove it true and
+    what would prove it false. "None yet" is an acceptable answer;
+    inventing data is not.
+  - `UNKNOWNS` — 2–4 things that would flip the verdict if they
+    turned out a certain way.
+  - `CONFIDENCE` — a 0..1 number for the verdict itself. "0.5 means
+    you would change your mind for a free coffee. 0.9 means you
+    would bet money on it."
+- **`spec` now includes** `Assumptions`, `Failure Conditions`, and
+  `Risk Budget` sections in addition to the existing ones. Failure
+  conditions are deal-breakers, not bug lists ("latency > 2s" is
+  one; "the user dislikes the icon" is not).
+- **`postmortem` now ends with a `CALIBRATION` section** — the
+  difference between the original premortem verdict and the actual
+  outcome. This is the single most useful sentence in the whole
+  document: it teaches whether the premortem process itself was
+  calibrated or not.
+
+### Notes
+
+- 56/56 tests pass, fmt clean, clippy `-D warnings` clean.
+- Binary is still single-file, no runtime deps, ~9 MB.
+- No new commands, no new flags, no new dependencies, no new types.
+  See DECISIONS.md D-020 for why this is the point.
+
+---
+
 ## pair v1.3 — 2026-08-25 *(predecessor / 前身)*
 
 ### Changed

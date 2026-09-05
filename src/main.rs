@@ -856,6 +856,16 @@ async fn premortem(
          4. The version that survived — the smallest cut of this idea that          dodges every cause of death above.
          5. Verdict — build it (at what scope) or don't (and what to do          instead).
 
+         After the autopsy, add a short STRUCTURED section:
+
+         ASSUMPTIONS — 3-5 things the build depends on being true. Be          specific ('a person will run this 3x/week', not 'people will want          this'). If you cannot name the assumption, name why you can't.
+
+         EVIDENCE — for each assumption: what would prove it true? what          would prove it false? Use only known data; if you have none, say          'none yet' rather than inventing.
+
+         UNKNOWNS — 2-4 things that, if they turned out a certain way,          would flip the verdict. Be specific about the direction of the flip.
+
+         CONFIDENCE — a number 0..1 for the verdict itself. 0.5 means you          would change your mind for a free coffee. 0.9 means you would          bet money on it. Pick a number; do not say 'medium'.
+
          Be specific to this idea. Generic startup advice is worthless here."
     );
 
@@ -901,7 +911,10 @@ async fn spec(
 
          # Goal — one paragraph: what exists when this is done, and for whom.
          # Non-goals — what this is NOT. Anything unlisted here, the agent          will build on a whim.
+         # Assumptions — 2-4 things the build depends on being true. Be          specific; 'users will want this' is not an assumption, it is a hope.
          # Success criteria — 3-5 concrete, checkable conditions.
+         # Failure conditions — 2-4 conditions under which the build is          considered failed regardless of whether it runs. A failure          condition is a deal-breaker; not a bug list. Examples: 'latency          > 2s', 'requires paid infrastructure', 'user cannot interpret          output without documentation'.
+         # Risk budget — the worst case the user is willing to absorb          (e.g. '1 weekend of my time, $20 of infra, then kill').
          # Constraints — language, platform, budget, things that must not change.
          # Milestones — ordered; each one independently runnable or checkable.
          # Open questions — what the user must decide; the agent should ask,          not guess.
