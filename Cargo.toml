@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "The voice that says no before your coding agents say yes — seed, drill, premortem, spec in your terminal"
 license = "MIT"
+repository = "https://github.com/Exist-DireRaven/naysay"
 build = "build.rs"
 
 [[bin]]
