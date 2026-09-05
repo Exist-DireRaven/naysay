@@ -1,9 +1,15 @@
 # naysay
 
-**The voice that says no before your coding agents say yes.**
-**在 coding agent 说 yes 之前，先说不的那个声音。**
+**Your coding agent will happily build the wrong thing.**
+**naysay asks: "should you build it at all?"**
+**你的 coding agent 会愉快地去做不该做的东西。**
+**naysay 问：你到底该不该做它？**
 
 [English](#english) · [中文](#中文)
+
+```
+idea → premortem → decision → spec → agent → postmortem
+```
 
 ---
 

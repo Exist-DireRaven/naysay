@@ -359,3 +359,69 @@ the user is on a moving-edge Windows toolchain and pinning would
 silently break the install. Until pinning is chosen, every release
 must include "CI clippy green on the current stable" as an explicit
 check.
+
+## D-019 · Roadmap under discipline (2026-09-05)
+
+**Decision:** Adopt a 3-version roadmap shaped by what an external
+review surfaced. Reject the temptation to do everything in v0.2.
+
+### The full review (paraphrased)
+
+A reviewer offered 27 recommendations across UX, product, architecture,
+and community. They are useful. Many of them are also Featuritis
+disguised as insight. The same reviewer closed with "do not add 30
+features." That warning is the most important thing in the review.
+
+### What we adopt now (v0.1.x polish)
+
+- **README front-page hook** — first 10 seconds must answer "what is
+  this and why would I want it", not "how do I install it".
+  Single-page edit. Shipped in this commit.
+- **examples/ kill-case library** — `001-flowforge.md` is live.
+  Brand differentiation: naysay showcases what it **stopped**, not
+  what it shipped. New cases get a three-digit number and the
+  convention `idea → premortem → decision → what actually happened`.
+  Single directory. Zero new dependencies.
+
+### What we accept as future versions (do not start until the current
+one is used)
+
+- **v0.2 — structured decisions.** `assumption` / `evidence` /
+  `unknown` / `confidence` / `kill criteria` / `success criteria`
+  as optional sections inside existing commands' output. The CLI
+  surface does not grow; the structured output becomes parseable
+  by the user's tools. **No new UI.**
+- **v0.3 — decision memory.** Local store (`.naysay/decisions/`)
+  linking premortem → spec → postmortem by id. Query:
+  "have we made this decision before?" and "what assumptions from
+  older decisions are now invalid?" This is where the project
+  starts paying for itself over years, not weeks.
+- **v0.4 — agent integration.** MCP server, Git hook emitting
+  decision records on commit, CI integration. The core thesis:
+  agents must learn to consume a naysay decision artifact, not
+  replace naysay.
+
+### What we explicitly reject (would regress the project)
+
+- "MCP server / GitHub App / VS Code / Codex / web UI / CI" as
+  distinct frontends. The Decision Model is internal until v0.3
+  proves it's worth sharing.
+- "Build KILL DEFER VALIDATE UNKNOWN" as a richer verdict
+  taxonomy in v0.2. Premortem already says BUILD-or-not in plain
+  language; the new vocabulary is a UX cost without a user.
+- "Decision Debt" terminology as a first-class concept. Add the
+  example, not the vocabulary. Terms should follow observed
+  patterns, not lead them.
+- "Calibration" (track prediction accuracy, beat the no-tool
+  baseline). This is the most ambitious suggestion and therefore
+  the most dangerous — it is the right thing eventually, but
+  doing it before we have decisions we believe in is putting
+  the cart before the horse. Deferred to v0.5+ pending a real
+  decision corpus.
+
+### How we enforce this
+
+Any new D-entry in this file proposing a feature in v0.2–v0.4 must
+identify which rejected item (if any) it competes with. If the
+proposal does not say what it displaces, it is by default
+rejected.
