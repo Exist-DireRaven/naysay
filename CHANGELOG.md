@@ -16,6 +16,80 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.3.0 — 2026-09-05
+
+Decision memory. The store is a directory of JSON files under
+`.naysay/decisions/` in the working directory; three pure-read query
+commands; best-effort auto-save in the three verdict commands. No LLM
+calls needed for any query.
+
+#### Added
+
+- **`.naysay/decisions/` store** — every `premortem` / `spec` /
+  `postmortem` call auto-saves a record: 12-hex id, timestamp, idea,
+  full body, and the structured sections extracted by substring scan
+  (assumptions, evidence, unknowns, failure conditions, confidence).
+  Save failures print to stderr and never break the command.
+- **`naysay decisions by-id <id>`** — print one record. Accepts the
+  bare id or the full file stem.
+- **`naysay decisions link <id>`** — walk the parent chain and print
+  the decision lineage as a tree.
+- **`naysay decisions unknowns`** — the UNKNOWNS inventory: every
+  "what we don't know" bullet across all stored premortems, oldest
+  first. Works on day one with zero LLM calls and no API key.
+- **REPL aliases** — `d-by-id`, `d-link`, `d-unknowns` inside the
+  plain REPL.
+- **5 unit tests** — id uniqueness/format, section extraction
+  (bullets + numbered lists + missing headings), confidence parsing
+  (fraction and percent), save/load roundtrip with parent linking.
+  Total: 61.
+
+#### Notes
+
+- The store is cwd-local by design (D-021): the user decides which
+  directory is a project. No git hooks, no sync, no server.
+- See `examples/003-decision-memory.md` for the self-review.
+
+---
+
+### naysay v0.2.0 — 2026-09-05
+
+Structured output, zero new surface. Same six commands, same six
+prompts, same CLI — only the prompt templates grow.
+
+### Changed
+
+- **`premortem` now ends with a structured section** in addition to
+  the existing autopsy:
+  - `ASSUMPTIONS` — 3–5 things the build depends on being true, each
+    specific enough to be wrong.
+  - `EVIDENCE` — for each assumption, what would prove it true and
+    what would prove it false. "None yet" is an acceptable answer;
+    inventing data is not.
+  - `UNKNOWNS` — 2–4 things that would flip the verdict if they
+    turned out a certain way.
+  - `CONFIDENCE` — a 0..1 number for the verdict itself. "0.5 means
+    you would change your mind for a free coffee. 0.9 means you
+    would bet money on it."
+- **`spec` now includes** `Assumptions`, `Failure Conditions`, and
+  `Risk Budget` sections in addition to the existing ones. Failure
+  conditions are deal-breakers, not bug lists ("latency > 2s" is
+  one; "the user dislikes the icon" is not).
+- **`postmortem` now ends with a `CALIBRATION` section** — the
+  difference between the original premortem verdict and the actual
+  outcome. This is the single most useful sentence in the whole
+  document: it teaches whether the premortem process itself was
+  calibrated or not.
+
+### Notes
+
+- 56/56 tests pass, fmt clean, clippy `-D warnings` clean.
+- Binary is still single-file, no runtime deps, ~9 MB.
+- No new commands, no new flags, no new dependencies, no new types.
+  See DECISIONS.md D-020 for why this is the point.
+
+---
+
 ### naysay v0.1.0 — 2026-09-04
 
 First naysay release. Built on pair v1.3.
@@ -148,133 +222,56 @@ First naysay release. Built on pair v1.3.
 
 ## 中文
 
-### naysay v0.1.0 — 2026-09-04
+### naysay v0.3.0 — 2026-09-05
 
-首个 naysay 正式发布。在 pair v1.3 之上构建。
-
-#### 变更
-
-- **二进制、包、keyring 服务、数据目录改名**:`pair` → `naysay`。
-  仍读旧 keyring 条目和 `MINIMAX_API_KEY` 环境变量,老用户无需重设。
-- **为 agent 时代重新定位**。新的 system prompt 把"开工前先审问"
-  作为默认姿态。pair 的"思考伙伴"框架直接和 Claude Code / ZCode
-  撞赛道;naysay 占它们留空的上游那一步。
-- **可换 provider**,通过 `<data_dir>/naysay.toml`。MiniMax 仍是默认,
-  文件里给 OpenAI / DeepSeek / 本地 Ollama 配了带注释的范例块。
-  `NAYSAY_CHAT_URL` / `NAYSAY_MODEL` 环境变量能覆盖文件(CI 逃生口)。
-- **移除 `build` 命令**。由 `premortem`(这事值不值得做)和
-  `spec`(agent 怎么执行)替换。详见 DECISIONS.md D-002。
-- **TLS 后端:rustls → native-tls**。mingw 工具链更新导致 `ring`
-  的 C 构建坏掉,在不替换工具链的情况下无法修复;在 Windows 上
-  native-tls 等价 Schannel,对 HTTPS 调用同样胜任,二进制还瘦
-  ~3 MB。详见 DECISIONS.md D-012。
-- **行内转录界面**——原来的全屏三面板 TUI(边框 / 历史窗格 / 状态
-  条 / alternate screen)没了。对话现在直接打印进终端自己的
-  scrollback;唯一活动区是底部两行(`>` 输入 + 暗色状态行)。退出后
-  转录稿留在原地,终端原生的 PageUp/scrollback 就能翻。流式逐字
-  不再实时渲染——响应整份到达,活跃感由状态行的 spinner + 实时
-  字符数承担。`/clear` 只清模型记忆,scrollback 属于终端,留下
-  来看。
+决策记忆。存储 = 工作目录下 `.naysay/decisions/` 的一组 JSON 文件;
+三个纯读查询命令;三个 verdict 命令自动落盘(尽力而为)。查询全程
+零 LLM 调用。
 
 #### 新增
 
-- **`postmortem <idea> [notes>`** — 项目结束了:复盘 + 一段
-  可直接粘贴进 DECISIONS.md 的决策日志条目。纯 REPL 用
-  `postmortem <idea> -- 实际情况` 传上下文。补完 seed → premortem →
-  spec → postmortem 的闭环。
-- **输入历史回溯** — `Ctrl+↑` / `Ctrl+↓` 翻历史(普通 `↑`/`↓`
-  仍滚动历史窗格);上限 100 条;打字取消回溯状态。
-- **空闲时命令提示** — 输入为空时状态行展示 verdict 系列,杀手锏
-  命令不用开 help 也能找到。
-- **转录界面会话日志** — TUI 现在也按 JSONL 记两边对话(之前
-  TUI 完全不记,`naysay sessions` 看不到大部分真实使用)。这也是
-  未来 `--continue` 会话恢复的基础。
-- **中文判决高亮** — `is_verdict_line` 在判决 / 结论 / 决定 时也
-  触发红字加粗。
-- **`--continue` + `/resume [file]`** — 会话恢复。`naysay --continue`
-  把最近一次会话的 turns 重放进对话(模型通过 3-turn 窗口自然读到);
-  `/resume` 在会话中途做同样的事,文件名参数解析规则和
-  `sessions show` 一样。新 turns 追加到同一会话文件。输入召回
-  (Ctrl+↑/↓) 从恢复的 turns 里播种。
-- **REPL 对话记忆** — 纯 REPL 现在记最近 3 轮(`/context N` 0..=10,
-  `/clear` 清空),所以 "X 怎么办?" 这种追问 REPL 也能用。六个命令
-  函数接受 `history: &[Message]` 并返回响应文本;REPL 双向记
-  日志并在 `--continue` 时回放。未识别命令仍然报错(脚本化模式
-  不要 freeform——见 DECISIONS.md D-015)。
-- **`premortem <idea>`** — 假设想法六个月后死了,写出尸检报告
-  (死因 / 排名死因 / 范围尸检 / 幸存版本 / 判决)。杀手锏 demo:
-  对 `FlowForge` 跑这一条,输出就是 README 的开屏画面。
-- **`spec <idea>`** — 产出专门喂给 coding agent 的工件。章节:目标 /
-  非目标 / 成功标准 / 约束 / 里程碑 / 待决问题。变成管线的
-  `agent's input` 那一半。
-- **`Config` + `naysay.toml`** — endpoint / model / env-var 名。
-  `OnceLock` 单例。坏 TOML 回退默认(同 `prompts.toml` 的契约)。
-- **`endpoint_host`** helper,给启动横幅和 doctor 用。
-- **token 表** — LLM 响应里的 `usage`(非流式 + 流式末块)现在
-  被解析展示:CLI/REPL 每调用后在 stderr 打一行,交互界面状态
-  行显示 `ready (1.2s · 812 tok)`。无 usage 时静默退化。
-- **重试 + 退避** — 429 和 5xx 最多重试 2 次(1s, 2s 指数退避)。
-  交互界面占着终端时重试静默。新增 10s 连接超时,防止挂死。
-- **`@dir` 目录内联** — `@./src/` 把目录下每个文本文件打包内联
-  (扩展名白名单、跳过 vendor/build 目录、60k 字符总预算、超出
-  内联报告)。
-- **`doctor` 配置校验** — 新增第一项检查:`naysay.toml` 严格
-  TOML 解析 + 字段校验(URL scheme、模型 id、env-var 名),附
-  修复提示。
-- **单元测试** — `Config::parse`(3)、`endpoint_host`(2)、语言
-  检测(4)、display width(3)、verdict 匹配(5)、context 语言
-  hint(2)、session-record 解析(3)、newest-session 选择(2)、
-  session-arg 解析(1)、REPL context/record(3)、usage 解析(5)、
-  retry/backoff(2)、config 校验(1)、@dir 收集(3)。总数:56。
-- **`AGENTS.md`** — 协作 agent 的规则。agent 出主意,人决策。
-- **`DECISIONS.md`** — 设计日志。代码落地之前,每个非显然决定
-  都入档。
-- **`CODEMAP.md`** — `main.rs` + `tui.rs` 的逐函数地图。
-
-#### 备注
-
-- 仍然是单文件、零运行时依赖,~9 MB(native-tls 后更小)。
-- ~3800 行,比 pair v1.3 的 3381 略多:`build`(230 行)移除了,
-  但 `premortem` / `spec` / `postmortem` / provider config /
-  语言 hint 层都加了。
+- **`.naysay/decisions/` 存储** — 每次 `premortem` / `spec` /
+  `postmortem` 自动保存一条记录:12 位 hex id、时间戳、想法、完整
+  正文、按子串扫描提取的结构化段。保存失败只打 stderr,绝不破坏
+  命令本身。
+- **`naysay decisions by-id <id>`** — 打印一条记录。
+- **`naysay decisions link <id>`** — 沿 parent 链树形打印决策谱系。
+- **`naysay decisions unknowns`** — UNKNOWNS 清单:所有已存
+  premortem 里"我们不知道什么"的子弹。第一天就能用,零 API key。
+- **REPL 别名** — `d-by-id` / `d-link` / `d-unknowns`。
+- **5 个单元测试**。总数:61。
 
 ---
 
-## naysay v0.2.0 — 2026-09-05
+### naysay v0.2.0 — 2026-09-05
 
-Structured output, zero new surface. Same six commands, same six
-prompts, same CLI — only the prompt templates grow.
+结构化输出,零新表面。同样的六个命令、六个 prompt、同一个 CLI——
+只是 prompt 模板长了结构化段:
 
-### Changed
+- `premortem` → `ASSUMPTIONS / EVIDENCE / UNKNOWNS / CONFIDENCE`
+- `spec` → `Assumptions / Failure Conditions / Risk Budget`
+- `postmortem` → `CALIBRATION`
 
-- **`premortem` now ends with a structured section** in addition to
-  the existing autopsy:
-  - `ASSUMPTIONS` — 3–5 things the build depends on being true, each
-    specific enough to be wrong.
-  - `EVIDENCE` — for each assumption, what would prove it true and
-    what would prove it false. "None yet" is an acceptable answer;
-    inventing data is not.
-  - `UNKNOWNS` — 2–4 things that would flip the verdict if they
-    turned out a certain way.
-  - `CONFIDENCE` — a 0..1 number for the verdict itself. "0.5 means
-    you would change your mind for a free coffee. 0.9 means you
-    would bet money on it."
-- **`spec` now includes** `Assumptions`, `Failure Conditions`, and
-  `Risk Budget` sections in addition to the existing ones. Failure
-  conditions are deal-breakers, not bug lists ("latency > 2s" is
-  one; "the user dislikes the icon" is not).
-- **`postmortem` now ends with a `CALIBRATION` section** — the
-  difference between the original premortem verdict and the actual
-  outcome. This is the single most useful sentence in the whole
-  document: it teaches whether the premortem process itself was
-  calibrated or not.
+无新命令、无新 flag、无新依赖、无新类型(DECISIONS.md D-020)。
 
-### Notes
+---
 
-- 56/56 tests pass, fmt clean, clippy `-D warnings` clean.
-- Binary is still single-file, no runtime deps, ~9 MB.
-- No new commands, no new flags, no new dependencies, no new types.
-  See DECISIONS.md D-020 for why this is the point.
+### naysay v0.1.0 — 2026-09-04
+
+首个 naysay 发布(在 pair v1.3 之上重建)。完整条目见上方 English 节;
+要点:
+
+- **改名 pair → naysay**,二进制 / keyring / 数据目录全换,旧凭据兼容。
+- **为 agent 时代重新定位**:"开工前先审问"成为默认姿态。
+- **`premortem` / `spec` / `postmortem` 三个 verdict 命令**上线;
+  `build` 移除(DECISIONS.md D-002)。
+- **provider 可换**(`naysay.toml`,MiniMax 默认,OpenAI / DeepSeek /
+  本地 Ollama 范例),`NAYSAY_CHAT_URL` / `NAYSAY_MODEL` 环境变量覆盖。
+- **行内转录界面**替代全屏 TUI:对话进终端 scrollback,唯一活动区
+  是底部两行。
+- **REPL 对话记忆**(`/context N` / `/clear`)、`--continue` 会话恢复、
+  `naysay decisions` 决策存储之前身:session JSONL 双向日志。
+- 56 项单元测试;单二进制 ~9 MB。
 
 ---
 

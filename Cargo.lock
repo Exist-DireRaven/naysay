@@ -802,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "naysay"
-version = "0.1.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",

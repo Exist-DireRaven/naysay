@@ -474,3 +474,67 @@ decision memory that re-validates each structured block on write.
   `Result<String>`. Output is still a String with newlines.
 - No change to the public JSON schema for `--json` (yet — that lands
   when at least three real users need it).
+
+## D-021 · v0.3 — Decision Memory, again zero new surface (2026-09-05)
+
+**Decision:** v0.3 adds a local decision store and three pure query
+commands. No new flag, no new LLM-backed command, no new dependency,
+no new user-facing surface beyond the store and the queries.
+
+### Premortem (of v0.3 itself)
+
+**Cause of death (most likely):** turning memory into a framework —
+MCP server, vector embeddings, semantic search, GraphRAG. The first
+reviewer already said "don't add 30 features" (D-019). Memory's
+value is its existence, not its cleverness.
+
+**Ranked killers:**
+1. Schema-mania: forcing the LLM to emit JSON-shaped output that
+   downstream code parses, in v0.3 itself rather than after v0.3 has
+   proven the store earns its keep.
+2. Repo-coupling: requiring `.naysay/` to live inside a git repo
+   with a particular layout. The user might not have a git repo
+   when first running.
+3. State-on-disk bugs: silent corruption, partial writes, race
+   conditions when two REPLs run in parallel. Premature robustness
+   writes more code than the feature.
+
+**Version that survived:** three query commands that read the
+store (`d-by-id`, `d-link`, `d-unknowns`) plus auto-write on
+`premortem` / `spec` / `postmortem` (8-char hex id, appended to
+content). The store is a directory of JSON files under `.naysay/
+decisions/` in the cwd; nothing more.
+
+### What v0.3 ships
+
+- `.naysay/decisions/` directory created on first save.
+- `premortem` / `spec` / `postmortem` (when `--save` or no `--save`
+  but running interactively, i.e. TUI) write a JSON record to the
+  store with: id, timestamp, idea, full text, plus extracted
+  fields (assumptions, evidence, unknowns, confidence, failure
+  conditions, risk budget, calibration, predecessor id).
+- Three pure-read commands: `d-by-id <id>` (print one record),
+  `d-link <a> <b>` (show a→b chain of related decisions),
+  `d-unknowns` (list every UNKNOWN/UNKNOWNS across all stored
+  premortems — the "what we don't know" inventory).
+- `d-` prefix aliases for the long names (parity with `seed` /
+  `angles`, `drill` / `pros`).
+
+### What v0.3 deliberately does not ship
+
+- Vector search. Plain text grep is enough for thousands of records.
+- Auto-link by content similarity. The user names the link when
+  they have it; until then, "no link" is a correct answer.
+- Git hooks / repo-side validation. The store is cwd-local; the
+  user chooses when to commit it.
+- Multi-store / sync / cloud. One cwd, one store.
+- Schema-validated LLM output. The id + timestamp + raw text +
+  extracted fields are stored as a single JSON file per record;
+  nothing in the runtime parses the body.
+
+### What this is not
+
+v0.3 is the smallest change that makes naysay's decisions
+**queryable** in a useful way. It is not a knowledge graph, not a
+calibration engine, not a learning loop. Those come after at least
+one real user has produced at least ten real records.
