@@ -133,8 +133,38 @@ enum Command {
     },
     /// Calibration: premortem verdicts vs postmortem outcomes
     Calibration,
+    /// Decision session management (start / list / show / resume / close / context)
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
     /// Diagnose common setup problems (key, sessions dir, network)
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum SessionAction {
+    /// Start a new decision session with a root idea
+    Start {
+        /// The root idea for this decision
+        idea: String,
+    },
+    /// List all decision sessions
+    List,
+    /// Show one session's exploration tree
+    Show {
+        /// Session id (e.g. ds-1788611175)
+        id: String,
+    },
+    /// Set a session as current (subsequent commands carry its context)
+    Resume {
+        /// Session id
+        id: String,
+    },
+    /// Clear the current session pointer (subsequent commands run standalone)
+    Close,
+    /// Print the context manifest for the current session
+    Context,
 }
 
 #[derive(Subcommand)]
@@ -771,6 +801,14 @@ async fn main() -> Result<()> {
         },
         Some(Command::Calibration) => store::run_calibration(),
         Some(Command::Doctor) => doctor().await,
+        Some(Command::Session { action }) => match action {
+            SessionAction::Start { idea } => store::run_session_start(&idea),
+            SessionAction::List => store::run_session_list(),
+            SessionAction::Show { id } => store::run_session_show(&id),
+            SessionAction::Resume { id } => store::run_session_resume(&id),
+            SessionAction::Close => store::run_session_close(),
+            SessionAction::Context => store::run_context_manifest(""),
+        },
     }
 }
 
@@ -1165,9 +1203,30 @@ async fn premortem(
         Some(block) => format!("{prompt}\n\n{block}"),
         None => prompt,
     };
+    let prompt = match store::session_context_block(&store::Op::Premortem) {
+        Some(block) => format!("{prompt}\n\n{block}"),
+        None => prompt,
+    };
 
     let content = call_llm(&prompt, history, 1500, 0.6).await?;
     note_usage_stderr();
+    let saved_ref = match store::save_decision("premortem", idea, &content, parent) {
+        Ok(id) => {
+            eprintln!("decision-store: saved premortem {id} under .naysay/decisions/");
+            Some(id)
+        }
+        Err(e) => {
+            eprintln!("decision-store: save failed: {e}");
+            None
+        }
+    };
+    store::record_session_step(
+        &store::Op::Premortem,
+        idea,
+        &content,
+        saved_ref.as_deref(),
+        true,
+    );
     emit_output(
         "premortem",
         save_path,
@@ -1228,9 +1287,24 @@ async fn spec(
         Some(block) => format!("{prompt}\n\n{block}"),
         None => prompt,
     };
+    let prompt = match store::session_context_block(&store::Op::Spec) {
+        Some(block) => format!("{prompt}\n\n{block}"),
+        None => prompt,
+    };
 
     let content = call_llm(&prompt, history, 2000, 0.4).await?;
     note_usage_stderr();
+    let saved_ref = match store::save_decision("spec", idea, &content, parent) {
+        Ok(id) => {
+            eprintln!("decision-store: saved spec {id} under .naysay/decisions/");
+            Some(id)
+        }
+        Err(e) => {
+            eprintln!("decision-store: save failed: {e}");
+            None
+        }
+    };
+    store::record_session_step(&store::Op::Spec, idea, &content, saved_ref.as_deref(), true);
     emit_output(
         "spec",
         save_path,
@@ -1253,11 +1327,6 @@ async fn spec(
             })
         },
     )?;
-    if let Err(e) = store::save_decision("spec", idea, &content, parent) {
-        eprintln!("decision-store: save failed: {e}");
-    } else {
-        eprintln!("decision-store: saved spec under .naysay/decisions/");
-    }
     Ok(content)
 }
 
@@ -1305,9 +1374,30 @@ async fn postmortem(
         Some(block) => format!("{prompt}\n\n{block}"),
         None => prompt,
     };
+    let prompt = match store::session_context_block(&store::Op::Postmortem) {
+        Some(block) => format!("{prompt}\n\n{block}"),
+        None => prompt,
+    };
 
     let content = call_llm(&prompt, history, 1500, 0.5).await?;
     note_usage_stderr();
+    let saved_ref = match store::save_decision("postmortem", idea, &content, parent) {
+        Ok(id) => {
+            eprintln!("decision-store: saved postmortem {id} under .naysay/decisions/");
+            Some(id)
+        }
+        Err(e) => {
+            eprintln!("decision-store: save failed: {e}");
+            None
+        }
+    };
+    store::record_session_step(
+        &store::Op::Postmortem,
+        idea,
+        &content,
+        saved_ref.as_deref(),
+        true,
+    );
     emit_output(
         "postmortem",
         save_path,
@@ -1323,11 +1413,6 @@ async fn postmortem(
             })
         },
     )?;
-    if let Err(e) = store::save_decision("postmortem", idea, &content, parent) {
-        eprintln!("decision-store: save failed: {e}");
-    } else {
-        eprintln!("decision-store: saved postmortem under .naysay/decisions/");
-    }
     Ok(content)
 }
 
@@ -2239,7 +2324,7 @@ async fn doctor() -> Result<()> {
 use std::path::PathBuf;
 
 /// Local data directory for sessions and similar state.
-fn data_dir() -> Result<PathBuf> {
+pub(crate) fn data_dir() -> Result<PathBuf> {
     #[cfg(target_os = "windows")]
     let base = std::env::var("LOCALAPPDATA")
         .or_else(|_| std::env::var("APPDATA"))
@@ -2261,7 +2346,7 @@ fn data_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn session_dir() -> Result<PathBuf> {
+pub(crate) fn session_dir() -> Result<PathBuf> {
     let dir = data_dir()?.join("sessions");
     std::fs::create_dir_all(&dir).context("create sessions dir")?;
     Ok(dir)

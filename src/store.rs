@@ -4,6 +4,7 @@
 //! concern. Everything here is deterministic — no LLM calls. The
 //! store is cwd-local (`.naysay/decisions/`) by design (D-021).
 
+use crate::{data_dir, session_dir};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -146,8 +147,8 @@ pub(crate) fn save_decision_to(
     body: &str,
     parent: Option<&str>,
     nanos: u128,
-) -> std::io::Result<String> {
-    std::fs::create_dir_all(dir)?;
+) -> Result<String> {
+    std::fs::create_dir_all(dir).context("create decision dir")?;
     for _ in 0..8 {
         let id = make_decision_id(nanos.wrapping_add(1));
         let path = dir.join(format!("{}-{}.json", kind, id));
@@ -185,9 +186,7 @@ pub(crate) fn save_decision_to(
         }
         return Ok(id);
     }
-    Err(std::io::Error::other(
-        "could not mint a fresh decision id after 8 tries",
-    ))
+    anyhow::bail!("could not mint a fresh decision id after 8 tries")
 }
 
 /// Save into the cwd store. Best-effort: callers print the error and move
@@ -197,7 +196,7 @@ pub(crate) fn save_decision(
     idea: &str,
     body: &str,
     parent: Option<&str>,
-) -> std::io::Result<String> {
+) -> Result<String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -569,12 +568,12 @@ fn load_registry(dir: &std::path::Path) -> Vec<Assumption> {
         .unwrap_or_default()
 }
 
-fn save_registry(dir: &std::path::Path, reg: &[Assumption]) -> std::io::Result<()> {
+fn save_registry(dir: &std::path::Path, reg: &[Assumption]) -> Result<()> {
     let path = assumptions_path(dir);
     std::fs::create_dir_all(path.parent().unwrap_or(dir))?;
-    let json =
-        serde_json::to_string_pretty(reg).map_err(|e| std::io::Error::other(e.to_string()))?;
-    std::fs::write(path, json)
+    let json = serde_json::to_string_pretty(reg)?;
+    std::fs::write(path, json).context("write output file")?;
+    Ok(())
 }
 
 /// Normalize a claim for matching: lowercase, collapse whitespace, strip
@@ -605,7 +604,7 @@ pub(crate) fn register_assumptions(
     source: &str,
     ts: u64,
     claims: &[String],
-) -> std::io::Result<()> {
+) -> Result<()> {
     if claims.is_empty() {
         return Ok(());
     }
@@ -640,7 +639,7 @@ pub(crate) fn register_assumptions(
 /// Only EXISTING registry entries flip; unknown claims are ignored (a
 /// postmortem cannot invent assumptions that premortems never made).
 /// Returns the number of statuses changed.
-pub(crate) fn apply_status_updates(dir: &std::path::Path, body: &str) -> std::io::Result<usize> {
+pub(crate) fn apply_status_updates(dir: &std::path::Path, body: &str) -> Result<usize> {
     let mut updates: Vec<(String, String)> = Vec::new();
     for raw in body.lines() {
         let upper = raw.to_uppercase();
@@ -690,7 +689,7 @@ pub(crate) fn verify_assumption(
     claim_substr: &str,
     status: &str,
     note: Option<&str>,
-) -> std::io::Result<bool> {
+) -> Result<bool> {
     let mut reg = load_registry(dir);
     let mut found = false;
     let norm_sub = normalize_claim(claim_substr);
@@ -928,6 +927,542 @@ pub(crate) fn run_d_verify(claim: &str, status: &str, note: Option<&str>) -> Res
         anyhow::bail!(
             "no tracked assumption matches \"{claim}\" — see: naysay decisions assumptions"
         );
+    }
+    Ok(())
+}
+
+// ─── v0.7 decision session ─────────────────────────────────────────────────────────────────
+
+/// The operation a session step records. Only the core decision-loop ops
+/// enter the session; auxiliary queries (questions, contrarian, explain,
+/// summarize…) do not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Op {
+    Seed,
+    Drill,
+    Premortem,
+    Spec,
+    Postmortem,
+}
+
+impl Op {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Op::Seed => "seed",
+            Op::Drill => "drill",
+            Op::Premortem => "premortem",
+            Op::Spec => "spec",
+            Op::Postmortem => "postmortem",
+        }
+    }
+    #[allow(dead_code)]
+    pub(crate) fn from_kind(kind: &str) -> Option<Op> {
+        match kind {
+            "angles" | "seed" => Some(Op::Seed),
+            "drill" | "pros" => Some(Op::Drill),
+            "premortem" => Some(Op::Premortem),
+            "spec" => Some(Op::Spec),
+            "postmortem" => Some(Op::Postmortem),
+            _ => None,
+        }
+    }
+}
+
+/// One operation in a decision session. `parent_seq` links a drill to the
+/// seed/step it drills into; premortem/spec/postmortem chain via
+/// `saved_ref` into the decision store.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SessionStep {
+    pub seq: u32,
+    pub op: Op,
+    pub input: String,
+    pub output_full: String,
+    pub output_digest: String,
+    pub parent_seq: Option<u32>,
+    pub saved_ref: Option<String>,
+    pub ts: u64,
+}
+
+/// A decision session: the full exploration around one root idea.
+/// Stored as `.naysay/sessions/ds-<epoch>.json` (versioned for evolution).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct DecisionSession {
+    pub version: u32,
+    pub id: String,
+    pub root_idea: String,
+    pub created_ts: u64,
+    pub updated_ts: u64,
+    pub steps: Vec<SessionStep>,
+}
+
+impl DecisionSession {
+    pub(crate) fn new(root_idea: &str, ts: u64) -> Self {
+        Self {
+            version: 1,
+            id: format!("ds-{}", ts),
+            root_idea: root_idea.to_string(),
+            created_ts: ts,
+            updated_ts: ts,
+            steps: Vec::new(),
+        }
+    }
+
+    /// Append a step. Digest = first 2 non-empty lines, capped at 240 chars.
+    pub(crate) fn append(
+        &mut self,
+        op: Op,
+        input: &str,
+        output_full: &str,
+        parent_seq: Option<u32>,
+        saved_ref: Option<&str>,
+        ts: u64,
+    ) -> u32 {
+        let seq = self.steps.len() as u32;
+        let digest = output_digest_of(output_full);
+        self.steps.push(SessionStep {
+            seq,
+            op,
+            input: input.to_string(),
+            output_full: output_full.to_string(),
+            output_digest: digest,
+            parent_seq,
+            saved_ref: saved_ref.map(|s| s.to_string()),
+            ts,
+        });
+        self.updated_ts = ts;
+        seq
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn last_of_op(&self, op: &Op) -> Option<&SessionStep> {
+        self.steps.iter().rev().find(|s| s.op == *op)
+    }
+
+    pub(crate) fn latest_premortem(&self) -> Option<&SessionStep> {
+        self.steps.iter().rev().find(|s| s.op == Op::Premortem)
+    }
+
+    /// Exploration digests for prompt injection: seed/drill steps only,
+    /// with parent_seq for tree rendering.
+    #[allow(dead_code)]
+    pub(crate) fn exploration_digests(&self) -> Vec<(u32, &SessionStep)> {
+        self.steps
+            .iter()
+            .filter(|s| matches!(s.op, Op::Seed | Op::Drill))
+            .map(|s| (s.seq, s))
+            .collect()
+    }
+}
+
+/// Digest of an LLM output: first 2 non-empty lines joined, capped at 240
+/// chars. This is the currency of context assembly — full text lives in
+/// the step, only the digest enters the prompt budget.
+pub(crate) fn output_digest_of(output: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for raw in output.lines() {
+        let t = raw.trim();
+        if !t.is_empty() {
+            lines.push(t.to_string());
+        }
+        if lines.len() == 2 {
+            break;
+        }
+    }
+    let mut out = lines.join(" | ");
+    if out.chars().count() > 240 {
+        out = out.chars().take(240).collect();
+        out.push('…');
+    }
+    out
+}
+
+/// Decision-session persistence: `.naysay/sessions/ds-<epoch>.json` —
+/// the same dir as the conversation JSONL logs, distinguishable by prefix.
+fn decision_session_path(id: &str) -> Result<std::path::PathBuf> {
+    Ok(session_dir()?.join(format!("{}.json", id)))
+}
+
+pub(crate) fn save_decision_session(session: &DecisionSession) -> Result<()> {
+    let path = decision_session_path(&session.id)?;
+    let json =
+        serde_json::to_string_pretty(session).map_err(|e| std::io::Error::other(e.to_string()))?;
+    std::fs::write(path, json).context("write output file")?;
+    Ok(())
+}
+
+pub(crate) fn load_decision_session(id: &str) -> Option<DecisionSession> {
+    let path = decision_session_path(id).ok()?;
+    let raw = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// The current-session pointer: `.naysay/session-current` (one line = id).
+/// Its EXISTENCE is the stateful/standalone switch (D-024 contract).
+fn current_session_pointer() -> Result<std::path::PathBuf> {
+    Ok(data_dir()?.join("session-current"))
+}
+
+pub(crate) fn load_current_session() -> Option<DecisionSession> {
+    let ptr = current_session_pointer().ok()?;
+    let id = std::fs::read_to_string(&ptr).ok()?.trim().to_string();
+    if id.is_empty() {
+        return None;
+    }
+    load_decision_session(&id)
+}
+
+/// Save the session and set it as current — used by record_step.
+pub(crate) fn save_current_session(session: &DecisionSession) -> Result<()> {
+    save_decision_session(session)?;
+    set_current_session(&session.id)
+}
+
+pub(crate) fn set_current_session(id: &str) -> Result<()> {
+    std::fs::write(current_session_pointer()?, id).context("write session pointer")?;
+    Ok(())
+}
+
+pub(crate) fn clear_current_session() -> Result<()> {
+    match std::fs::remove_file(current_session_pointer()?) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub(crate) fn list_decision_sessions() -> Vec<DecisionSession> {
+    let mut out = Vec::new();
+    if let Ok(dir) = session_dir() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            let mut paths: Vec<std::path::PathBuf> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_stem()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.starts_with("ds-"))
+                        .unwrap_or(false)
+                })
+                .collect();
+            paths.sort();
+            for path in paths {
+                if let Ok(raw) = std::fs::read_to_string(&path) {
+                    if let Ok(s) = serde_json::from_str::<DecisionSession>(&raw) {
+                        out.push(s);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The session-scoped context block for one operation. Returns None when
+/// there is no current session (standalone mode) or nothing relevant.
+pub(crate) fn session_context_block(op: &Op) -> Option<String> {
+    let session = load_current_session()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Some(assemble_session_block(op, &session, now))
+}
+
+/// Assemble the session context block for one operation. Context is
+/// SELECTED per op, not dumped (v0.7 goal §15).
+pub(crate) fn assemble_session_block(op: &Op, session: &DecisionSession, now: u64) -> String {
+    let day = 86_400u64;
+    let root = format!("root idea: \"{}\"", session.root_idea);
+
+    match op {
+        Op::Seed => {
+            let mut out = format!(
+                "SESSION CONTEXT — current decision in formation:\n{root}\n\nexploration so far:\n"
+            );
+            let seeds: Vec<&SessionStep> =
+                session.steps.iter().filter(|s| s.op == Op::Seed).collect();
+            if seeds.is_empty() {
+                out.push_str("  (this is the first seed round)\n");
+            } else {
+                for s in &seeds {
+                    let age = now.saturating_sub(s.ts) / day;
+                    out.push_str(&format!(
+                        "  [seed #{} · {}d ago] {}\n",
+                        s.seq, age, s.output_digest
+                    ));
+                }
+                out.push_str(
+                    "RULES: prior seed rounds produced angles already — do not repeat them. Build on or diverge from them.\n",
+                );
+            }
+            out
+        }
+        Op::Drill => {
+            // The parent branch: the most recent premortem-relevant step or
+            // the last seed — its FULL output is the branch being drilled.
+            let parent = session
+                .steps
+                .iter()
+                .rev()
+                .find(|s| matches!(s.op, Op::Seed | Op::Drill));
+            let mut out = format!(
+                "SESSION CONTEXT — current decision in formation:\n{root}\n\nselected branch (drill into THIS, not sideways):\n"
+            );
+            if let Some(p) = parent {
+                let age = now.saturating_sub(p.ts) / day;
+                out.push_str(&format!(
+                    "  [{} #{} · {}d ago] {}\n",
+                    p.op.as_str(),
+                    p.seq,
+                    age,
+                    p.output_digest
+                ));
+            }
+            let drills: Vec<&SessionStep> =
+                session.steps.iter().filter(|s| s.op == Op::Drill).collect();
+            if drills.len() > 1 {
+                out.push_str("prior drills on record:\n");
+                for d in &drills[..drills.len() - 1] {
+                    out.push_str(&format!("  [drill #{}] {}\n", d.seq, d.output_digest));
+                }
+            }
+            out.push_str("RULES: go deeper on THIS branch — not sideways.\n");
+            out
+        }
+        Op::Premortem => {
+            let mut out = format!(
+                "SESSION CONTEXT — current decision in formation:\n{root}\n\nexploration so far (the user's selected path):\n"
+            );
+            for s in &session.steps {
+                let age = now.saturating_sub(s.ts) / day;
+                out.push_str(&format!(
+                    "  [{} #{} · {}d ago] {}\n",
+                    s.op.as_str(),
+                    s.seq,
+                    age,
+                    s.output_digest
+                ));
+            }
+            if session.steps.is_empty() {
+                out.push_str("  (no exploration yet — the idea went straight to premortem)\n");
+            }
+            out.push_str(
+                "RULES: the exploration above is the user's selected path — weigh it as the \
+                 reasoning basis for the verdict.\n",
+            );
+            out
+        }
+        Op::Spec => {
+            let decision = session
+                .latest_premortem()
+                .map(|s| s.output_full.as_str())
+                .unwrap_or("");
+            let mut out = format!(
+                "SESSION CONTEXT — current decision in formation:\n{root}\n\nTHE DECISION (from the premortem — the spec implements THIS):\n\n{decision}\n"
+            );
+            out.push_str("RULES: the spec implements THIS decision — do not substitute goals.\n");
+            out
+        }
+        Op::Postmortem => {
+            let prem = session.latest_premortem();
+            let spec = session.steps.iter().rev().find(|s| s.op == Op::Spec);
+            let mut out = format!(
+                "SESSION CONTEXT — current decision in formation:\n{root}\n\nTHE DECISION (premortem):\n"
+            );
+            if let Some(p) = prem {
+                out.push_str(&format!("{}\n", p.output_digest));
+            }
+            if let Some(sp) = spec {
+                out.push_str(&format!("\nTHE SPEC (digest):\n{}\n", sp.output_digest));
+            }
+            out.push_str("RULES: evaluate against THIS decision and its spec.\n");
+            out
+        }
+    }
+}
+
+/// Record a step into the current session. Auto-creates a session when
+/// `auto_create` is set (REPL/TUI); CLI standalone passes false.
+/// Returns the step's seq, or None when no session is active.
+pub(crate) fn record_session_step(
+    op: &Op,
+    input: &str,
+    output_full: &str,
+    saved_ref: Option<&str>,
+    auto_create: bool,
+) -> Option<u32> {
+    let mut session = match load_current_session() {
+        Some(s) => s,
+        None if auto_create => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            DecisionSession::new(input, now)
+        }
+        None => return None,
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let seq = session.append(*op, input, output_full, None, saved_ref, ts);
+    save_current_session(&session).ok()?;
+    Some(seq)
+}
+
+/// v0.7 CLI: `naysay session start "root idea"`.
+pub(crate) fn run_session_start(root_idea: &str) -> Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let session = DecisionSession::new(root_idea, now);
+    let id = session.id.clone();
+    save_decision_session(&session)?;
+    set_current_session(&id)?;
+    println!(
+        "\u{2713} session {} started — root idea: \"{}\"",
+        id, root_idea
+    );
+    println!("  subsequent premortem/spec/postmortem commands in this cwd will carry its context");
+    Ok(())
+}
+
+/// v0.7 CLI: `naysay session list`.
+pub(crate) fn run_session_list() -> Result<()> {
+    let sessions = list_decision_sessions();
+    if sessions.is_empty() {
+        println!("(no decision sessions yet — one starts with the first premortem/spec in a cwd, or `naysay session start`)");
+        return Ok(());
+    }
+    println!("{:<14} {:>6}  ROOT IDEA", "ID", "STEPS");
+    for s in &sessions {
+        println!("{:<14} {:>6}  {}", s.id, s.steps.len(), s.root_idea);
+    }
+    Ok(())
+}
+
+/// v0.7 CLI: `naysay session show <id>` — full exploration tree + steps.
+pub(crate) fn run_session_show(id: &str) -> Result<()> {
+    let Some(session) = load_decision_session(id).filter(|s| s.id == id || id.is_empty()) else {
+        anyhow::bail!("session not found: {id}");
+    };
+    println!(
+        "session {}  ·  root idea: \"{}\"",
+        session.id, session.root_idea
+    );
+    println!(
+        "created {}  ·  {} steps",
+        session.created_ts,
+        session.steps.len()
+    );
+    println!();
+    // Exploration tree by parent_seq.
+    let mut printed = vec![false; session.steps.len()];
+    loop {
+        let mut progressed = false;
+        for s in &session.steps {
+            let idx = s.seq as usize;
+            if printed[idx] {
+                continue;
+            }
+            let parent_printed = match s.parent_seq {
+                None => true,
+                Some(p) => printed.get(p as usize).copied().unwrap_or(true),
+            };
+            if parent_printed {
+                let depth = 0; // flat for now; the chain is visible via seq order
+                let _ = depth;
+                println!("  [{:>2}] {:<11} {}", s.seq, s.op.as_str(), s.output_digest);
+                printed[idx] = true;
+                progressed = true;
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// v0.7 CLI: `naysay session resume <id>` — set as current.
+pub(crate) fn run_session_resume(id: &str) -> Result<()> {
+    let Some(session) = load_decision_session(id) else {
+        anyhow::bail!("session not found: {id}");
+    };
+    set_current_session(&session.id)?;
+    println!(
+        "\u{2713} resumed {} — root idea: \"{}\" ({} steps)",
+        session.id,
+        session.root_idea,
+        session.steps.len()
+    );
+    Ok(())
+}
+
+/// v0.7 CLI: `naysay session close` — clear the current pointer.
+pub(crate) fn run_session_close() -> Result<()> {
+    clear_current_session().context("clear current session")?;
+    println!("\u{2713} session closed — subsequent commands run standalone");
+    Ok(())
+}
+
+/// v0.7 CLI: `naysay context` — the context manifest for the current cwd.
+pub(crate) fn run_context_manifest(idea: &str) -> Result<()> {
+    let (width, screen_h) = crossterm::terminal::size()
+        .map(|s| (s.0 as usize, s.1 as usize))
+        .unwrap_or((80, 24));
+    let _ = (width, screen_h);
+    match load_current_session() {
+        Some(session) => {
+            println!(
+                "session   : {}  ·  root idea: \"{}\"",
+                session.id, session.root_idea
+            );
+            println!("steps     : {}", session.steps.len());
+            for s in &session.steps {
+                println!("  [{:>2}] {:<11} {}", s.seq, s.op.as_str(), s.output_digest);
+            }
+        }
+        None => {
+            println!("session   : (none — standalone mode)");
+        }
+    }
+    let dir = decisions_dir().context("decision store not accessible")?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let risks = assumption_risk_lines(&dir, idea, now, 5);
+    println!("assumptions matching \"{}\":", idea);
+    if risks.is_empty() {
+        println!("  (none tracked)");
+    } else {
+        for r in &risks {
+            println!("  {r}");
+        }
+    }
+    let q = tokenize(idea);
+    let records = load_all_records(&dir);
+    let mut hist: Vec<(f64, &DecisionRecord)> = records
+        .iter()
+        .map(|r| {
+            let mut doc = r.idea.clone();
+            doc.push(' ');
+            doc.push_str(&r.body);
+            (relevance_score(&q, &tokenize(&doc)), r)
+        })
+        .filter(|(s, _)| *s > 0.12)
+        .collect();
+    hist.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    println!("historical decisions:");
+    if hist.is_empty() {
+        println!("  (none relevant)");
+    } else {
+        for (score, r) in hist.iter().take(3) {
+            println!("  {:.2}  {}-{}  \"{}\"", score, r.kind, r.id, r.idea);
+        }
     }
     Ok(())
 }
