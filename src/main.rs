@@ -1107,15 +1107,20 @@ async fn seed(
     save_path: Option<&str>,
     json: bool,
 ) -> Result<String> {
-    let prompt = format!(
+    let mut prompt = format!(
         "The user wants to brainstorm around this topic: {topic}\n\n\
          Surface angles they probably haven't considered. Pick a number of \
          angles that fits the topic (5-10 usually). Each angle: short, \
          specific, surprising — not generic."
     );
+    let ctx = store::resolve(&store::Op::Seed, topic, None);
+    if !ctx.text.is_empty() {
+        prompt = format!("{prompt}\n\n{}", ctx.text);
+    }
 
     let content = call_llm(&prompt, history, 1200, 0.7).await?;
     note_usage_stderr();
+    store::record_session_step(&store::Op::Seed, topic, &content, None, true);
     emit_output(
         "seed",
         save_path,
@@ -1141,15 +1146,20 @@ async fn drill(
     save_path: Option<&str>,
     json: bool,
 ) -> Result<String> {
-    let prompt = format!(
+    let mut prompt = format!(
         "The user picked this idea to drill into: {idea}\n\n\
          Break it into 3-5 actionable sub-points. Each sub-point should be \
          concrete and specific — something the user can actually do, not a \
          vague restatement of the parent idea."
     );
+    let ctx = store::resolve(&store::Op::Drill, idea, None);
+    if !ctx.text.is_empty() {
+        prompt = format!("{prompt}\n\n{}", ctx.text);
+    }
 
     let content = call_llm(&prompt, history, 800, 0.6).await?;
     note_usage_stderr();
+    store::record_session_step(&store::Op::Drill, idea, &content, None, true);
     emit_output(
         "drill",
         save_path,
@@ -1176,7 +1186,7 @@ async fn premortem(
     save_path: Option<&str>,
     json: bool,
 ) -> Result<String> {
-    let prompt = format!(
+    let mut prompt = format!(
         "The user is about to commit to building this: {idea}
 
          Run the premortem. It is six months in the future and this project          is dead — abandoned, unmaintained, or alive but ignored. Write the          autopsy:
@@ -1199,14 +1209,10 @@ async fn premortem(
 
          Be specific to this idea. Generic startup advice is worthless here."
     );
-    let prompt = match store::memory_context(idea) {
-        Some(block) => format!("{prompt}\n\n{block}"),
-        None => prompt,
-    };
-    let prompt = match store::session_context_block(&store::Op::Premortem) {
-        Some(block) => format!("{prompt}\n\n{block}"),
-        None => prompt,
-    };
+    let ctx = store::resolve(&store::Op::Premortem, idea, parent);
+    if !ctx.text.is_empty() {
+        prompt = format!("{prompt}\n\n{}", ctx.text);
+    }
 
     let content = call_llm(&prompt, history, 1500, 0.6).await?;
     note_usage_stderr();
@@ -1266,7 +1272,7 @@ async fn spec(
     save_path: Option<&str>,
     json: bool,
 ) -> Result<String> {
-    let prompt = format!(
+    let mut prompt = format!(
         "The user wants to hand this to a coding agent to execute: {idea}
 
          Write the spec the agent will receive. Assume the agent is capable          but has zero context, and will take the path of least resistance          wherever the spec is vague. Sections:
@@ -1283,14 +1289,10 @@ async fn spec(
 
          Be concrete. A vague spec means the agent improvises, and          improvisation is where rework is born."
     );
-    let prompt = match store::memory_context(idea) {
-        Some(block) => format!("{prompt}\n\n{block}"),
-        None => prompt,
-    };
-    let prompt = match store::session_context_block(&store::Op::Spec) {
-        Some(block) => format!("{prompt}\n\n{block}"),
-        None => prompt,
-    };
+    let ctx = store::resolve(&store::Op::Spec, idea, parent);
+    if !ctx.text.is_empty() {
+        prompt = format!("{prompt}\n\n{}", ctx.text);
+    }
 
     let content = call_llm(&prompt, history, 2000, 0.4).await?;
     note_usage_stderr();
@@ -1348,7 +1350,7 @@ async fn postmortem(
             .to_string(),
     };
 
-    let prompt = format!(
+    let mut prompt = format!(
         "The project \"{idea}\" is over — shipped, killed, or quietly abandoned.\n\n\
          {notes_block}\n\
          Write the postmortem:\n\n\
@@ -1370,14 +1372,10 @@ async fn postmortem(
          ASSUMPTION STATUS UPDATE — the PARENT DECISION assumptions listed          below (if any) were the premortem's claims. For each one the          outcome actually tested, end the output with exactly one line:          `ASSUMPTION VALID: <claim>` or `ASSUMPTION INVALIDATED: <claim>`.          If the outcome did not test an assumption, emit nothing for it.\n\n\
          Be specific to this project. Blame decisions, not people."
     );
-    let prompt = match parent.and_then(store::parent_assumption_context) {
-        Some(block) => format!("{prompt}\n\n{block}"),
-        None => prompt,
-    };
-    let prompt = match store::session_context_block(&store::Op::Postmortem) {
-        Some(block) => format!("{prompt}\n\n{block}"),
-        None => prompt,
-    };
+    let ctx = store::resolve(&store::Op::Postmortem, idea, parent);
+    if !ctx.text.is_empty() {
+        prompt = format!("{prompt}\n\n{}", ctx.text);
+    }
 
     let content = call_llm(&prompt, history, 1500, 0.5).await?;
     note_usage_stderr();

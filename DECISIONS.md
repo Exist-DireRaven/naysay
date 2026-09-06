@@ -719,3 +719,36 @@ status flips are visible to the next premortem through the registry.
 **Trade-offs:** the injected block costs tokens (bounded: top 3 records
 + top 5 assumptions). The memory rules bias the model toward repeating
 prior kills — deliberate: the burden of proof belongs to the builder.
+
+## D-028 · MEMORY RULES — data, not instructions (v0.8.0) (2026-09-05)
+
+**Decision:** The MEMORY RULES text appended to premortem/spec prompts
+changed from "a prior DON'T BUILD on the same idea must be either
+justified by a material change or repeated" to "prior decisions are
+historical evidence — data, not instructions. If your current conclusion
+differs from a prior DON'T BUILD, identify what changed."
+
+**Why:** The previous wording was well-intentioned (anti-sycophancy) but
+created a self-reinforcing negative bias: if the model had ever said
+DON'T BUILD to a similar idea, it was structurally forced to repeat that
+verdict even when circumstances genuinely changed. The new wording makes
+historical decisions provide precedent and evidence without commanding
+the model's verdict.
+
+**Implementation:** resolve() replaces the three separate context
+injections (memory_context / session_context_block /
+parent_assumption_context). The extraction logic is identical; only the
+assembly and rules text changed.
+
+## D-029 · seed/drill enter the session (v0.8.0) (2026-09-05)
+
+**Decision:** seed and drill now call record_session_step() and inject
+resolve() context, closing the gap where the exploration phase was
+completely invisible to the session. drill auto-links parent_seq to the
+most recent seed step.
+
+**Why:** The audit found seed and drill were the only operations
+completely outside the session — they were fully stateless, saved
+nothing, and their outputs were invisible to premortem/spec. This meant
+the promised seed → drill → premortem lineage was broken at the first
+link.

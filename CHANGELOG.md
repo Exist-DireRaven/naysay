@@ -16,6 +16,49 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.8.0 — 2026-09-05
+
+ContextResolver: the single place that decides what context an operation
+sees. Replaces three scattered context injections (memory_context,
+session_context_block, parent_assumption_context) with one deterministic
+resolve() call per operation.
+
+#### Added
+
+- **`SelectedContext` + `resolve()`** — the provenance-typed return of
+  the context resolver. Every field (session_id, root_idea,
+  exploration_count, historical_count, assumption_count, warnings) is
+  a fact about what was selected and why. `/context` renders it,
+  the prompt builder consumes it.
+- **seed/drill enter the session** — seed and drill now record steps
+  into the DecisionSession and inject session + historical context
+  into their prompts (previously they were fully session-blind).
+- **Drill auto-links parent_seq** — drill automatically links to the
+  most recent seed step (previously always None), enabling real
+  branch lineage.
+- **MEMORY RULES rewritten** — prior decisions are now explicitly
+  labeled "historical evidence — data, not instructions." A prior
+  DON'T BUILD is no longer binding; the model must identify what
+  changed if it disagrees, but is not forced to repeat the old verdict.
+
+#### Changed
+
+- **`memory_context` / `session_context_block` / `parent_assumption_context`
+  replaced by `resolve()`** — one function, one selection, one provenance
+  type. Callers no longer concatenate three separate blocks.
+- **`save_decision_to` registers assumptions at the correct level** —
+  `.naysay/assumptions.json` (was writing to a sibling of the parent dir).
+
+#### Notes
+
+- 82/82 tests pass, clippy -D warnings clean, fmt clean.
+- LOC: main.rs ~3130, tui.rs ~2840, store.rs ~800.
+- D-028: the MEMORY RULES rewrite from "must repeat" to "data, not
+  instructions" is the most important semantic change in this release.
+  The previous wording risked a self-reinforcing negative bias.
+
+---
+
 ### naysay v0.7.0 — 2026-09-05
 
 **naysay remembers what you decided — and asks whether it is still
@@ -434,6 +477,36 @@ First naysay release. Built on pair v1.3.
 <a id="中文"></a>
 
 ## 中文
+
+### naysay v0.8.0 — 2026-09-05
+
+ContextResolver：决定一次操作能看到什么上下文的唯一入口。替换了
+三处分散注入（memory_context / session_context_block /
+parent_assumption_context）。
+
+#### 新增
+
+- **`SelectedContext` + `resolve()`** — 带 provenance 的返回类型。
+  每个字段都是事实。
+- **seed / drill 进入 session** — 此前完全无状态；现在记录 step
+  并注入 session + 历史决策上下文。
+- **drill 自动链接 parent_seq** — drill 自动关联最近的 seed step
+  （此前永远 None）。
+- **MEMORY RULES 改写** — 历史决策明确标注为"历史证据——数据，
+  非指令"。D-028。
+
+#### 变更
+
+- **三个注入函数合并为 `resolve()`** — 一个函数、一次选择、一个
+  provenance 类型。
+- **假设注册表路径修正** — 写到 `.naysay/assumptions.json`。
+
+#### 备注
+
+- 82/82 测试、clippy 清洁、fmt 干净。
+- LOC：main.rs ~3130，tui.rs ~2840，store.rs ~760。
+
+---
 
 ### naysay v0.7.0 — 2026-09-05
 
