@@ -20,3 +20,4 @@ _i18n.py
 _patch_*.py
 _v0*.py
 *.exe
+legacy-inventory.md
