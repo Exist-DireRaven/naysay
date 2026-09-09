@@ -33,7 +33,14 @@ keyring = { version = "3", features = ["windows-native"] }
 keyring = { version = "3", features = ["apple-native"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
+# `vendored` compiles libdbus from the crate's bundled source: CI runners and
+# user machines need no libdbus-1-dev to build, and the binary needs no
+# libdbus at runtime (D-006).
+keyring = { version = "3", features = [
+    "linux-native-sync-persistent",
+    "crypto-rust",
+    "vendored",
+] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
