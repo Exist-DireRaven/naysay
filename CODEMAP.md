@@ -12,14 +12,14 @@ This file is part of the codebase. If you change the rules, change this file.
 Companion to `DECISIONS.md` (which answers "why?"). This answers
 "what?".
 
-Codebase at v0.10.0: ~8900 lines across `src/main.rs` + `src/tui.rs` +
+Codebase at v0.10.0: ~9000 lines across `src/main.rs` + `src/tui.rs` +
 `src/store.rs` + `src/text.rs` + `src/workspace.rs`.
 If you can read all three files end-to-end with this map in hand, you own the
 tool. If you can't, that's the part to study next.
 
 ---
 
-## `src/main.rs` (≈ 3310 lines)
+## `src/main.rs` (≈ 3400 lines)
 
 ### CLI layer
 
@@ -112,8 +112,8 @@ tool. If you can't, that's the part to study next.
 | `call_llm_with_model` | Inner. Takes model name explicitly so the TUI can pass `/model`-chosen values. POSTs via `post_chat_with_retry`, stores usage. |
 | `post_chat_with_retry` | Resilient POST: 429/5xx retried up to 2x (1s/2s backoff), body never consumed before the retry decision. Silent while the TUI owns the terminal (`TUI_ACTIVE` flag); 10s connect timeout. |
 | `is_retryable_status` / `backoff_secs` | Retry policy, pure functions (unit-tested). |
-| `call_llm_stream` | Streaming twin. Same request shape but `stream: true`, then `bytes_stream` → `drain_sse_events` per chunk. |
-| `drain_sse_events` | Hand-rolled SSE parser. Drains complete events from buffer (keeps partial trailing event). Emits deltas. Tolerates missing-delta, malformed JSON, finish_reason chunks. **Has 9 unit tests.** |
+| `call_llm_stream` | Streaming twin. Same request shape but `stream: true`, then `bytes_stream` → `drain_sse_events` per chunk; stops at `[DONE]` and fails after 120 s of silence (D-041). |
+| `drain_sse_events` | Hand-rolled SSE parser. Drains complete events from buffer (keeps partial trailing event). Emits deltas, reports usage and the terminal `[DONE]`. Tolerates missing-delta, malformed JSON, finish_reason chunks. **Has 9 unit tests.** |
 
 ### Output formatting
 
@@ -247,6 +247,66 @@ tool. If you can't, that's the part to study next.
 | `export_conversation` | Ctrl+S → write a markdown transcript to cwd (`naysay-<epoch>.md`). |
 | `play_sound` | Win32 `Beep` for submit / success / error. Off by default. No-op on non-Windows. |
 | `play_background_music` | Looping bassline (`--music` flag). No-op on non-Windows. |
+
+---
+
+## `src/store.rs` (≈ 1890 lines)
+
+The decision store, the assumption registry and the decision sessions. All
+deterministic — no LLM calls (D-023) — and cwd-local plain JSON (D-021):
+`.naysay/decisions/`, `.naysay/assumptions.json`, `.naysay/sessions/`.
+
+### Records
+
+| symbol | what it does |
+|--------|--------------|
+| `DecisionRecord` | One saved decision: id, kind, ts, idea, parent, body, the extracted sections, confidence, verdict, outcome. |
+| `decisions_dir` / `make_decision_id` | `.naysay/decisions/`; 12 hex chars from wall-clock nanos, retried on collision. |
+| `save_decision_to` / `save_decision` / `save_verdict` | Write one record; `save_verdict` also records the session step (D-031). `parent` is normalized through `bare_id`. |
+| `bare_id` | Both printed id forms (`hex` and `kind-hex`) resolve to the bare hex, so links and calibration pair up either way. |
+| `read_record_by_id` / `load_all_records` | Lookup by either id form; load the whole store sorted by time. |
+| `run_d_by_id` / `run_d_unknowns` / `run_d_link` | `decisions show` / `unknowns` / `link`. |
+
+### Extraction (substring scans, never validated)
+
+| symbol | what it does |
+|--------|--------------|
+| `heading_key` / `heading_matches` | Normalize a heading (`#`, `*`, `_`, `:` stripped) and match it plus the Chinese aliases. |
+| `extract_section` | The bullet/numbered list under a heading; blank lines belong to the section, which is the shape models actually write. |
+| `extract_confidence` / `confidence_number` | 0..=100 from the CONFIDENCE line or the next non-empty line; fractions scale. |
+| `extract_verdict` / `extract_outcome` | The `VERDICT:` / `OUTCOME:` lines. |
+| `is_cjk` / `tokenize` / `relevance_score` | CJK bigrams plus word tokens; overlap coefficient. |
+| `classify_verdict_outcome` | verdict × outcome → held / wrong / overridden / unknown. |
+| `run_calibration` / `run_d_relevant` | `calibration` pairs linked records; `decisions relevant` scores the store. |
+
+### Assumption registry (v0.7)
+
+| symbol | what it does |
+|--------|--------------|
+| `Assumption` | Claim (normalized key) + display + UNKNOWN/VALID/QUESTIONED/INVALIDATED + provenance. |
+| `assumptions_path` / `load_registry` / `save_registry` | `.naysay/assumptions.json`, rewritten whole on change. |
+| `normalize_claim` | Lowercase, collapse whitespace, strip trailing punctuation — the matching key. |
+| `register_assumptions` / `apply_status_updates` | Register or restate claims; flip statuses from `ASSUMPTION VALID|INVALIDATED:` lines. |
+| `assumption_risk_lines` / `parent_assumption_context` | The risk lines for prompt injection and the postmortem's status-update checklist. |
+| `verify_assumption` / `run_d_assumptions` / `run_d_verify` | `decisions assumptions` / `verify`. |
+
+### Decision sessions (v0.8)
+
+| symbol | what it does |
+|--------|--------------|
+| `Op` / `SessionStep` / `DecisionSession` | The operation enum, one recorded step (input, full output, digest, parent_seq, saved_ref), and the session around one root idea. |
+| `output_digest_of` | First 2 non-empty lines, capped at 240 chars — the currency of context assembly. |
+| `save_decision_session` / `load_decision_session` / `list_decision_sessions` | `.naysay/sessions/ds-<epoch>.json`. |
+| `current_session_pointer` / `load_current_session` / `save_current_session` / `set_current_session` / `clear_current_session` | The `.naysay/session-current` pointer. |
+| `assemble_session_block` / `record_session_step` | Build the context block for one op; append a step (auto-create is the caller's choice, D-037). |
+| `run_session_start` / `list` / `show` / `resume` / `close` / `run_context_manifest` | The `session` and `context` subcommands. |
+
+### Context resolver (v0.8)
+
+| symbol | what it does |
+|--------|--------------|
+| `SelectedContext` | What one operation will see, by source: the assembled text plus provenance counts and warnings. |
+| `resolve` | The single place that decides context per op — session exploration, top-N historical verdicts, assumption risks, MEMORY RULES. |
 
 ---
 

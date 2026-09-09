@@ -2140,13 +2140,30 @@ where
     };
 
     let mut last_usage: Option<Usage> = None;
-    while let Some(chunk) = byte_stream.next().await {
+    loop {
+        // `[DONE]` ends the answer even when the provider keeps the
+        // connection open (MiniMax's legacy endpoint does), and the idle
+        // timeout turns a silent stall into an error the user can act on
+        // instead of an eternal "thinking".
+        let next = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, byte_stream.next()).await {
+            Ok(next) => next,
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "stream stalled: no data for {}s (the provider kept the connection open)",
+                    STREAM_IDLE_TIMEOUT.as_secs()
+                ))
+            }
+        };
+        let Some(chunk) = next else { break };
         let bytes = chunk.context("failed reading response chunk")?;
         buffer.push_str(&String::from_utf8_lossy(&bytes));
         match drain_sse_events(&mut buffer, &mut sink) {
-            Ok(u) => {
-                if u.is_some() {
-                    last_usage = u;
+            Ok(drain) => {
+                if drain.usage.is_some() {
+                    last_usage = drain.usage;
+                }
+                if drain.done {
+                    break;
                 }
             }
             Err(e) => return Err(anyhow::anyhow!("SSE parser failed mid-stream: {e}")),
@@ -2159,6 +2176,11 @@ where
     Ok(full)
 }
 
+/// Give up when the provider goes quiet for this long. Generous enough for a
+/// reasoning model's first token, short enough that a dead stream becomes an
+/// error rather than an eternal spinner.
+const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Drain complete SSE events from `buffer`, calling `on_delta` for each
 /// content piece. The buffer keeps any partial trailing event; the next
 /// call (with more bytes) finishes it.
@@ -2166,12 +2188,21 @@ where
 /// SSE spec: events are separated by blank lines (`\n\n`). Each event is a
 /// series of `field: value` lines. We only care about `data:` lines; other
 /// fields (`event:`, `id:`, `retry:`) are ignored. The terminal event has
-/// payload `[DONE]` and is also ignored.
+/// payload `[DONE]`; it is consumed and reported through `SseDrain::done`.
+/// What one drain pass found: token usage when the provider sent it, and
+/// whether the terminal `[DONE]` event arrived. `[DONE]` means the answer is
+/// complete even if the connection stays open.
+#[derive(Default)]
+pub(crate) struct SseDrain {
+    pub(crate) usage: Option<Usage>,
+    pub(crate) done: bool,
+}
+
 fn drain_sse_events(
     buffer: &mut String,
     on_delta: &mut dyn FnMut(&str),
-) -> Result<Option<Usage>, String> {
-    let mut usage: Option<Usage> = None;
+) -> Result<SseDrain, String> {
+    let mut out = SseDrain::default();
     while let Some(idx) = buffer.find("\n\n") {
         let event: String = buffer.drain(..idx + 2).collect();
         for line in event.lines() {
@@ -2179,7 +2210,11 @@ fn drain_sse_events(
                 continue;
             };
             let payload = payload.trim();
-            if payload.is_empty() || payload == "[DONE]" {
+            if payload.is_empty() {
+                continue;
+            }
+            if payload == "[DONE]" {
+                out.done = true;
                 continue;
             }
             // Malformed JSON must not abort the stream. The server may
@@ -2198,7 +2233,7 @@ fn drain_sse_events(
                 }
             };
             if let Some(u) = parsed.usage {
-                usage = Some(u);
+                out.usage = Some(u);
             }
             if let Some(choice) = parsed.choices.into_iter().next() {
                 let piece = choice.delta.content;
@@ -2208,7 +2243,7 @@ fn drain_sse_events(
             }
         }
     }
-    Ok(usage)
+    Ok(out)
 }
 
 /// Strip leading "1." / "1、" / "1:" / "- " / "* " markers if the model emitted them,
@@ -2412,7 +2447,10 @@ async fn doctor() -> Result<()> {
         }
         Err(e) => {
             println!("✗ fail — {e:#}");
-            println!("         hint: run `naysay key set` or set NAYSAY_API_KEY");
+            println!(
+                "         hint: run `naysay key set` or set {}",
+                config().api_key_env
+            );
             failures += 1;
         }
     }
@@ -2774,11 +2812,18 @@ mod tests {
     }
 
     #[test]
-    fn sse_done_marker_is_ignored() {
+    fn sse_done_marker_ends_the_stream() {
         let chunk = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n\
                      data: [DONE]\n\n";
-        let (out, _) = run_drain(chunk);
-        assert_eq!(out, "x");
+        let mut buf = chunk.to_string();
+        let mut pieces: Vec<String> = Vec::new();
+        let drain = {
+            let mut sink = |p: &str| pieces.push(p.to_string());
+            drain_sse_events(&mut buf, &mut sink).unwrap()
+        };
+        assert_eq!(pieces.join(""), "x");
+        assert!(drain.done, "[DONE] must terminate the stream");
+        assert_eq!(buf, "", "the [DONE] event is consumed, not left behind");
     }
 
     #[test]
@@ -2846,7 +2891,7 @@ mod tests {
         let mut buf = chunk.to_string();
         let mut pieces: Vec<String> = Vec::new();
         let mut sink = |p: &str| pieces.push(p.to_string());
-        let usage = drain_sse_events(&mut buf, &mut sink).unwrap();
+        let usage = drain_sse_events(&mut buf, &mut sink).unwrap().usage;
         assert_eq!(
             usage,
             Some(Usage {
@@ -2863,7 +2908,10 @@ mod tests {
 ";
         let mut buf = chunk.to_string();
         let mut sink = |p: &str| {};
-        assert_eq!(drain_sse_events(&mut buf, &mut sink).unwrap(), None);
+        assert!(drain_sse_events(&mut buf, &mut sink)
+            .unwrap()
+            .usage
+            .is_none());
     }
 
     #[test]

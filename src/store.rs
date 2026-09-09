@@ -120,7 +120,15 @@ pub(crate) fn extract_section(body: &str, heading: &str) -> Vec<String> {
             }
         } else {
             let t = line.trim();
-            if t.is_empty() || t.starts_with('#') {
+            if t.is_empty() {
+                // Markdown puts a blank line after a heading, and often
+                // between items. Treating that as the end of the section made
+                // extraction depend on the model's whitespace habits: a
+                // premortem written as `**ASSUMPTIONS**\n\n1. …` registered
+                // nothing. Only a heading or prose ends a section now.
+                continue;
+            }
+            if t.starts_with('#') {
                 in_section = false;
                 continue;
             }
@@ -144,31 +152,44 @@ pub(crate) fn extract_section(body: &str, heading: &str) -> Vec<String> {
 }
 
 /// Parse the confidence number out of a line mentioning CONFIDENCE.
-/// Accepts "0.62" and "62"; returns 0..=100.
+/// Accepts "0.62" and "62"; returns 0..=100. The value may be on the heading
+/// line (`CONFIDENCE: 0.65`) or on the next non-empty line, which is what
+/// every `**CONFIDENCE**\n\n0.65 — …` answer actually looks like.
 pub(crate) fn extract_confidence(body: &str) -> Option<u8> {
-    for raw in body.lines() {
-        let t = raw.trim();
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    for (i, t) in lines.iter().enumerate() {
         if !t.to_uppercase().contains("CONFIDENCE") && !t.contains("置信度") {
             continue;
         }
-        let mut digits = String::new();
-        let mut seen_dot = false;
-        for ch in t.chars() {
-            if ch.is_ascii_digit() {
-                digits.push(ch);
-            } else if ch == '.' && !seen_dot && !digits.is_empty() {
-                digits.push(ch);
-                seen_dot = true;
-            } else if !digits.is_empty() {
-                break;
-            }
+        if let Some(v) = confidence_number(t) {
+            return Some(v);
         }
-        if let Ok(v) = digits.parse::<f64>() {
-            let scaled = if v <= 1.0 { v * 100.0 } else { v };
-            return Some(scaled.round().clamp(0.0, 100.0) as u8);
+        if let Some(next) = lines[i + 1..].iter().find(|l| !l.is_empty()) {
+            if let Some(v) = confidence_number(next) {
+                return Some(v);
+            }
         }
     }
     None
+}
+
+/// First number on the line, scaled to 0..=100 when it is a fraction.
+fn confidence_number(line: &str) -> Option<u8> {
+    let mut digits = String::new();
+    let mut seen_dot = false;
+    for ch in line.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+        } else if ch == '.' && !seen_dot && !digits.is_empty() {
+            digits.push(ch);
+            seen_dot = true;
+        } else if !digits.is_empty() {
+            break;
+        }
+    }
+    let v = digits.parse::<f64>().ok()?;
+    let scaled = if v <= 1.0 { v * 100.0 } else { v };
+    Some(scaled.round().clamp(0.0, 100.0) as u8)
 }
 
 /// Core save, parameterized by directory so tests can use a temp dir.
@@ -192,7 +213,7 @@ pub(crate) fn save_decision_to(
             kind: kind.to_string(),
             ts: (nanos / 1_000_000_000) as u64,
             idea: idea.to_string(),
-            parent: parent.map(|s| s.to_string()),
+            parent: parent.map(|s| bare_id(s).to_string()),
             body: body.to_string(),
             assumptions: extract_section(body, "ASSUMPTIONS"),
             evidence: extract_section(body, "EVIDENCE"),
@@ -237,6 +258,14 @@ pub(crate) fn save_decision(
     save_decision_to(&dir, kind, idea, body, parent, now)
 }
 
+/// Accept both id forms the tool prints: the bare hex (`d65ada23a70f`) and
+/// the kind-prefixed form (`premortem-d65ada23a70f`). Parent links and the
+/// calibration pairing compare through this, so a link written either way
+/// still resolves.
+pub(crate) fn bare_id(id: &str) -> &str {
+    id.rsplit('-').next().unwrap_or(id)
+}
+
 /// Persist a verdict and record its session step in one call — the shared
 /// entry point for every surface that produces a decision (CLI, REPL, TUI).
 /// Before v0.10 the TUI called neither, so decisions made on the default
@@ -263,7 +292,7 @@ pub(crate) fn save_verdict(op: &Op, kind: &str, idea: &str, body: &str) -> Optio
 }
 
 pub(crate) fn read_record_by_id(dir: &std::path::Path, id: &str) -> Option<DecisionRecord> {
-    let short = id.splitn(2, '-').last().unwrap_or(id);
+    let short = bare_id(id);
     let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
@@ -528,10 +557,9 @@ pub(crate) fn run_calibration() -> Result<()> {
     println!();
     println!("verdict vs outcome (linked pairs):");
     for p in &premortems {
-        let Some(child) = records
-            .iter()
-            .find(|r| r.kind == "postmortem" && r.parent.as_deref() == Some(p.id.as_str()))
-        else {
+        let Some(child) = records.iter().find(|r| {
+            r.kind == "postmortem" && r.parent.as_deref().map(bare_id) == Some(p.id.as_str())
+        }) else {
             continue;
         };
         let cls = classify_verdict_outcome(p.verdict.as_deref(), child.outcome.as_deref());
@@ -1710,6 +1738,56 @@ mod tests {
         );
         let dashed = "ASSUMPTIONS — 3-5 things the build depends on\n- one thing\n";
         assert_eq!(extract_section(dashed, "ASSUMPTIONS"), vec!["one thing"]);
+        // The shape every real premortem uses: bold heading, blank line,
+        // numbered list, blank line between items. Extracted nothing before.
+        let spaced = "**ASSUMPTIONS**\n\n1. a person will run this 3x/week\n\n2. setup takes under 10 minutes\n\n**EVIDENCE**\n\n1. none yet\n";
+        assert_eq!(
+            extract_section(spaced, "ASSUMPTIONS"),
+            vec![
+                "a person will run this 3x/week",
+                "setup takes under 10 minutes"
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_confidence_reads_value_on_next_line() {
+        // `**CONFIDENCE**\n\n0.65 — …` is the shape the model actually
+        // emits; the heading line has no digits of its own.
+        assert_eq!(
+            extract_confidence("**CONFIDENCE**\n\n0.65 — reasons\n"),
+            Some(65)
+        );
+        assert_eq!(extract_confidence("CONFIDENCE: 0.8\n"), Some(80));
+        assert_eq!(extract_confidence("CONFIDENCE: 62\n"), Some(62));
+        assert_eq!(extract_confidence("置信度\n\n0.7\n"), Some(70));
+        assert_eq!(extract_confidence("no confidence here\n"), None);
+    }
+
+    #[test]
+    fn bare_id_accepts_both_printed_forms() {
+        assert_eq!(bare_id("premortem-d65ada23a70f"), "d65ada23a70f");
+        assert_eq!(bare_id("d65ada23a70f"), "d65ada23a70f");
+    }
+
+    #[test]
+    fn save_normalizes_prefixed_parent_id() {
+        // `decisions relevant` prints ids as `kind-hex` while the internal
+        // comparison uses the bare hex. A parent written in the printed form
+        // used to never match, so calibration saw no linked pair.
+        let dir = tmp_store("parent-normalize");
+        let id = save_decision_to(&dir, "premortem", "x", "VERDICT: BUILD", None, 1).unwrap();
+        let child = save_decision_to(
+            &dir,
+            "postmortem",
+            "x",
+            "OUTCOME: BUILT",
+            Some(&format!("premortem-{id}")),
+            2,
+        )
+        .unwrap();
+        let rec = read_record_by_id(&dir, &child).expect("child readable");
+        assert_eq!(rec.parent.as_deref(), Some(id.as_str()));
     }
 
     #[test]

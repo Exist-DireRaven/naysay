@@ -135,6 +135,151 @@ like "what about X?" or "drill into #2" just work. `/context N`
 widens the memory window, `/clear` wipes it, and `naysay --continue`
 picks up yesterday's session where it left off.
 
+### A worked example: one idea, start to finish
+
+One real run in an empty directory, on `deepseek-chat`. Every block below is
+actual output, trimmed. The model answers in the language you write in — the
+prompts here are English, so the answers are.
+
+**0 — Set up the key once, then check the setup.**
+
+```bash
+naysay key set        # stored in the OS keyring, never in a file
+naysay doctor         # config / key / sessions dir / endpoint
+```
+
+```
+  [1/4] Config (naysay.toml)  ✓ ok (…/naysay.toml)
+  [2/4] API key ............. ✓ ok (MINIMAX_API_KEY env, 35 chars)
+  [3/4] Sessions dir ........ ✓ writable (…/sessions)
+  [4/4] Chat endpoint ...... ✓ reachable (HTTP 401)
+✓ all checks passed
+```
+
+`doctor` names the exact variable your `naysay.toml` expects (`api_key_env`),
+so a custom provider never sends you to the wrong one.
+
+**1 — Open the workspace and ask for breadth.**
+
+```bash
+naysay
+> seed a stock monitoring system for retail investors
+```
+
+```
+── angles: a stock monitoring system for retail investors ──
+1. **The anti-monitoring monitor.** Most retail investors check too often,
+   not too little. … The product isn't information — it's enforced patience.
+2. **Position-size-aware alerts.** … a $2 drop in a 1% position is noise;
+   a $0.50 drop in a 40% position is an emergency.
+…
+10. **The regret engine.** After you sell, the system keeps monitoring …
+```
+
+Ten angles, 7.5 s, 1012 tokens. The status row keeps the meter; the left
+pane lists the session and the store, the right pane holds the verdict the
+run will produce.
+
+**2 — Go deep on the angle that sparked.**
+
+```
+> drill position-size-aware alerts instead of static price thresholds
+── pros: position-size-aware alerts instead of static price thresholds ──
+1. It exposes hidden concentration drift. A stock that was 5% of your
+   portfolio three months ago can silently become 18% after a run-up …
+```
+
+**3 — Interrogate it: `premortem` assumes it died in six months.**
+
+```
+> premortem a stock monitoring system for retail investors
+── premortem: a stock monitoring system for retail investors ──
+1. Cause of death — You stopped opening the dashboard. Not because feeds
+   broke, but because the system told you nothing you didn't already know …
+2. Ranked killers — no decision attached to an alert / feed fragility as a
+   design assumption / over-scoping the watchlist …
+5. Verdict — Don't build the monitoring system. If you want to monitor
+   stocks, use your broker's existing alert feature — it already does this …
+
+ASSUMPTIONS
+1. You hold at least one stock position for which a stop-loss or take-profit
+   alert would change your behavior.
+2. You will check email (or whatever alert channel) at least once per trading
+   day.
+…
+CONFIDENCE — 0.85
+VERDICT: DON'T BUILD
+```
+
+8.7 s, 1891 tokens. The record, its assumptions and its confidence are saved
+automatically, and the right pane shows the verdict in red the moment the
+stream ends — no second command to see what was decided.
+
+**4 — Spec the version that survived.**
+
+The premortem said don't build the product; it also said the *small* version
+survives. `spec` turns that into an artifact a coding agent can execute.
+
+```
+> spec a Sunday-night CSV stock monitor: weekly broker CSV export, daily
+  closes, one email only when a position crosses a threshold
+── spec: … ──
+# Goal
+When done, a retail investor with at least one open stock position runs a
+single command on Sunday evening. …
+# Non-goals
+- No intraday monitoring, no real-time quotes, no websockets.
+- No mobile push notifications, no SMS, no Slack/Discord integration.
+…
+```
+
+`Esc` quits; the workspace is gone but the session log and the store are not.
+
+**5 — Weeks later: close the loop.**
+
+```bash
+naysay postmortem "a stock monitoring system for retail investors" \
+  "Built the Sunday-night script, used it twice, stopped. The CSV export
+   took 20 minutes each week." --parent premortem-d65ada23a70f
+```
+
+```
+── postmortem: … ──
+The Sunday-night script ran exactly twice before you stopped feeding it. …
+- **The export step would be the bottleneck.** Predicted: you'd abandon the
+  workflow before the script. Actual: you used it twice, then stopped.
+…
+OUTCOME: ABANDONED
+```
+
+The `--parent` link flips the premortem's assumptions where the review
+resolves them, and makes the pair visible to calibration:
+
+```bash
+$ naysay decisions relevant "stock monitor for retail investors"
+  1.00  premortem-d65ada23a70f  a stock monitoring system for retail investors
+        verdict: DON'T BUILD
+  0.80  postmortem-87669ba32e95  a stock monitoring system for retail investors
+
+$ naysay decisions assumptions
+tracked assumptions: 8
+[    UNKNOWN] "You hold at least one stock position for which a stop-loss
+               or take-profit alert would change your behavior."
+    first: premortem-d65ada23a70f-1788967602 (0d ago) · last: … (0d ago)
+…
+
+$ naysay calibration
+verdict vs outcome (linked pairs):
+  premortem-d65ada23a70f  conf= 85%  verdict=DON'T BUILD outcome=ABANDONED -> held
+held 1 / 1  (100%)  ·  wrong 0  ·  overridden 0
+(fewer than 3 linked pairs — this is a log, not a statistic)
+```
+
+The next premortem on a related idea is shown these records and the tracked
+assumptions before it answers — the memory is why the loop compounds. Every
+command above also works one-shot outside the TUI: `naysay premortem "…"`,
+`naysay spec "…"`, `naysay seed "…"`.
+
 ### Commands
 
 ```
@@ -240,7 +385,7 @@ mid-task — lives in a separate repo, `naysay-agent` (D-033).
 The tool runs on itself. Current state, queryable in this repo:
 
 ```
-logged decisions   : 38 (DECISIONS.md D-001 … D-039; D-027 unused)
+logged decisions   : 40 (DECISIONS.md D-001 … D-041; D-027 unused)
 kill cases         : 2 published (examples/) — incl. this tool's predecessor
 survivor           : the tool you are reading
 assumption registry: live (UNKNOWN → VALID/INVALIDATED lifecycle)
@@ -352,6 +497,139 @@ naysay postmortem "股票监控系统" --save postmortem.md
 
 也可以会话式地跑:直接 `naysay` 或 `naysay repl`,会话会记住最近几轮——"X 怎么办?" / "钻 #2" 这种追问直接可用。`/context N` 加宽窗口,`/clear` 清空,`naysay --continue` 接上昨天的会话。
 
+### 实例:一个想法,从角度到校准
+
+下面是空目录里的一次真实运行(模型 `deepseek-chat`),每个代码块都是真实输出,只做了截断。模型会用你输入的语言回答——这里用英文提问,所以回答也是英文。
+
+**0 — 配好 key,然后检查。**
+
+```bash
+naysay key set        # 存进操作系统 keyring,不落文件
+naysay doctor         # 配置 / key / 会话目录 / 端点
+```
+
+```
+  [1/4] Config (naysay.toml)  ✓ ok (…/naysay.toml)
+  [2/4] API key ............. ✓ ok (MINIMAX_API_KEY env, 35 chars)
+  [3/4] Sessions dir ........ ✓ writable (…/sessions)
+  [4/4] Chat endpoint ...... ✓ reachable (HTTP 401)
+✓ all checks passed
+```
+
+`doctor` 会报出你的 `naysay.toml` 实际认的变量名(`api_key_env`)——自定义 provider 时不会指错变量。
+
+**1 — 打开工作区,先要广度。**
+
+```bash
+naysay
+> seed a stock monitoring system for retail investors
+```
+
+```
+── angles: a stock monitoring system for retail investors ──
+1. **The anti-monitoring monitor.** Most retail investors check too often,
+   not too little. … The product isn't information — it's enforced patience.
+2. **Position-size-aware alerts.** … a $2 drop in a 1% position is noise;
+   a $0.50 drop in a 40% position is an emergency.
+…
+10. **The regret engine.** After you sell, the system keeps monitoring …
+```
+
+10 个角度,7.5 秒,1012 token。状态行保留 token 表;左栏是会话与决策库,右栏稍后会放判决。
+
+**2 — 对触发兴趣的那条钻下去。**
+
+```
+> drill position-size-aware alerts instead of static price thresholds
+── pros: position-size-aware alerts instead of static price thresholds ──
+1. It exposes hidden concentration drift. A stock that was 5% of your
+   portfolio three months ago can silently become 18% after a run-up …
+```
+
+**3 — 审问:假设它六个月后死了(`premortem`)。**
+
+```
+> premortem a stock monitoring system for retail investors
+── premortem: a stock monitoring system for retail investors ──
+1. Cause of death — You stopped opening the dashboard. Not because feeds
+   broke, but because the system told you nothing you didn't already know …
+2. Ranked killers — no decision attached to an alert / feed fragility as a
+   design assumption / over-scoping the watchlist …
+5. Verdict — Don't build the monitoring system. If you want to monitor
+   stocks, use your broker's existing alert feature — it already does this …
+
+ASSUMPTIONS
+1. You hold at least one stock position for which a stop-loss or take-profit
+   alert would change your behavior.
+2. You will check email (or whatever alert channel) at least once per trading
+   day.
+…
+CONFIDENCE — 0.85
+VERDICT: DON'T BUILD
+```
+
+8.7 秒,1891 token。记录、假设、置信度自动落盘;流一结束,右栏立刻用红色显示判决——不需要再敲一条命令去看结论。
+
+**4 — 给幸存版本出 spec。**
+
+premortem 说的是「别做完整产品」,同时也说了「小版本能活」。`spec` 把它变成 agent 能执行的交付物。
+
+```
+> spec a Sunday-night CSV stock monitor: weekly broker CSV export, daily
+  closes, one email only when a position crosses a threshold
+── spec: … ──
+# Goal
+When done, a retail investor with at least one open stock position runs a
+single command on Sunday evening. …
+# Non-goals
+- No intraday monitoring, no real-time quotes, no websockets.
+- No mobile push notifications, no SMS, no Slack/Discord integration.
+…
+```
+
+`Esc` 退出;工作区关了,但会话日志和决策库还在。
+
+**5 — 几周后:闭环。**
+
+```bash
+naysay postmortem "a stock monitoring system for retail investors" \
+  "Built the Sunday-night script, used it twice, stopped. The CSV export
+   took 20 minutes each week." --parent premortem-d65ada23a70f
+```
+
+```
+── postmortem: … ──
+The Sunday-night script ran exactly twice before you stopped feeding it. …
+- **The export step would be the bottleneck.** Predicted: you'd abandon the
+  workflow before the script. Actual: you used it twice, then stopped.
+…
+OUTCOME: ABANDONED
+```
+
+`--parent` 把复盘挂到当初的 premortem 上:复盘能翻掉它解决的假设,配对也进入 calibration:
+
+```bash
+$ naysay decisions relevant "stock monitor for retail investors"
+  1.00  premortem-d65ada23a70f  a stock monitoring system for retail investors
+        verdict: DON'T BUILD
+  0.80  postmortem-87669ba32e95  a stock monitoring system for retail investors
+
+$ naysay decisions assumptions
+tracked assumptions: 8
+[    UNKNOWN] "You hold at least one stock position for which a stop-loss
+               or take-profit alert would change your behavior."
+    first: premortem-d65ada23a70f-1788967602 (0d ago) · last: … (0d ago)
+…
+
+$ naysay calibration
+verdict vs outcome (linked pairs):
+  premortem-d65ada23a70f  conf= 85%  verdict=DON'T BUILD outcome=ABANDONED -> held
+held 1 / 1  (100%)  ·  wrong 0  ·  overridden 0
+(配对少于 3 条——这是日志,不是统计)
+```
+
+下一次对相关想法做 premortem 时,这些记录和被跟踪的假设会先喂给它——记忆是这套循环能复利的原因。上面每条命令也都能脱离 TUI 单跑:`naysay premortem "…"`、`naysay spec "…"`、`naysay seed "…"`。
+
 ### 命令
 
 ```
@@ -426,7 +704,7 @@ coding agent 在任务中途的那条 skill——在独立仓库 `naysay-agent`�
 这个工具跑在自己身上。当前状态，本仓库内可查：
 
 ```
-已入档决策   : 38 条（DECISIONS.md D-001 … D-039；D-027 未使用）
+已入档决策   : 40 条（DECISIONS.md D-001 … D-041；D-027 未使用）
 杀掉的项目   : 2 个已发布案例（examples/）—— 包括本工具的前身
 幸存者       : 你正在读的这个工具
 calibration  : naysay calibration（等真实决策闭环积累）

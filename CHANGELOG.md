@@ -39,6 +39,10 @@ model call, on every surface. Per D-034.
   three-pane view moved out of `tui.rs`; it is 2615 lines. The boundary is a
   design choice, not a quota — the line ceiling was retired the same day
   (D-039).
+- **A worked example in the README.** One real run — key setup, `seed`,
+  `drill`, `premortem`, `spec`, then `postmortem --parent` and calibration —
+  with the actual output, in both languages. It is the tutorial the first-run
+  flow never had.
 
 #### Changed
 
@@ -79,6 +83,26 @@ model call, on every surface. Per D-034.
   `apply_event` cleared `streaming` before matching on it, so the
   "replace the partial entry" arm was unreachable and the error landed as a
   second entry beside the partial text.
+- **A finished stream ends at `[DONE]`.** The reader loop only exited when
+  the connection closed and skipped `[DONE]` as "not content", so a provider
+  that keeps the connection open after the sentinel (MiniMax's legacy
+  endpoint) hung the TUI forever. A 120 s silence is now an error instead of
+  an endless "thinking". Per D-041.
+- **The keyring was a mock store.** `keyring` 3 ships no keystore by default,
+  so `key set` printed `✓ saved to OS keyring` and the credential was gone
+  by the next command. The platform stores are now enabled explicitly
+  (`windows-native` / `apple-native` / `linux-native-sync-persistent`). Per
+  D-040.
+- **Assumptions are extracted from the shape the model actually writes.**
+  `**ASSUMPTIONS**` followed by a blank line and a numbered list extracted
+  nothing, because a blank line ended the section; the same bug dropped
+  `confidence` when the value sat on the line under `**CONFIDENCE**`.
+- **Parent links resolve in both id forms.** `decisions relevant` prints
+  `kind-hex` while the store compares the bare hex, so a `--parent` copied
+  from the listing never matched and calibration saw no linked pair.
+- **`doctor`'s hint names the configured variable.** It always said
+  `NAYSAY_API_KEY`, even when `naysay.toml` expected a different
+  `api_key_env` — following the hint could leave the key unread.
 
 #### Notes
 
@@ -93,6 +117,12 @@ model call, on every surface. Per D-034.
   panes), `cargo clippy -- -D warnings` and `cargo fmt --check` clean,
   release build verified, and the three panes confirmed in a real terminal
   window.
+- **Tutorial run:** 95/95 tests pass, clippy and fmt clean, release build
+  verified. Verified live: the `[DONE]`-then-open stub completes instead of
+  hanging, the silent stub aborts at 120 s, `key set`/`status`/`delete`
+  round-trip through Windows Credential Manager across processes, and the
+  full loop above ran end to end against `deepseek-chat` (seed 1012 tok,
+  premortem 3747 tok, spec, postmortem 1940 tok).
 - **Not published.** 0.2.0 is the current crates.io release. D-019's rule is
   that the next version does not start until the current one has been used,
   and this onboarding has not been used once yet.

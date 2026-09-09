@@ -563,7 +563,7 @@ fn draw_decision(f: &mut Frame, area: Rect, view: &View) {
     )));
     let mut linked = false;
     if let Some(pid) = &rec.parent {
-        if let Some(parent) = view.records.iter().find(|r| r.id == *pid) {
+        if let Some(parent) = view.records.iter().find(|r| r.id == store::bare_id(pid)) {
             lines.push(linked_line("parent", parent, width));
             linked = true;
         }
@@ -571,7 +571,7 @@ fn draw_decision(f: &mut Frame, area: Rect, view: &View) {
     for child in view
         .records
         .iter()
-        .filter(|r| r.parent.as_deref() == Some(rec.id.as_str()))
+        .filter(|r| r.parent.as_deref().map(store::bare_id) == Some(rec.id.as_str()))
     {
         lines.push(linked_line("child", child, width));
         linked = true;

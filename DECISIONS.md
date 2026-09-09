@@ -1202,3 +1202,94 @@ the old quota.
   stay, because both are the right boundary. No code moves back.
 - 92/92 tests, clippy `-D warnings` and fmt clean, release build verified.
 
+## D-040 · The keyring was a mock store (2026-09-09)
+
+**Decision:** `keyring` is declared per platform with the keystore feature it
+needs — `windows-native`, `apple-native`, and on other Unix
+`linux-native-sync-persistent` + `crypto-rust` — instead of the bare
+`keyring = "3"` that pulled no store at all.
+
+### Why
+
+`keyring` 3 ships **no** default keystore: without an explicit feature it
+falls back to its in-process mock. Every symptom followed from that, and none
+of them looked like a bug:
+
+- `naysay key set` printed `✓ saved to OS keyring` and the credential was
+  gone by the next command; `key status` answered "no API key configured".
+- `naysay key delete` reported "(no key to delete)" for a key that had just
+  been "saved" — in a different process.
+- `naysay doctor` passed its key check whenever an environment variable was
+  set, so the broken path looked healthy.
+
+Found by walking the documented first-run flow: `key set` → `key status` in a
+fresh process returned nothing, and Windows Credential Manager showed no
+`naysay` entry. The crate's own docs are explicit — "There are no default
+features in this crate: you must specify explicitly which platform-specific
+credential stores you intend to use."
+
+### What it displaces (the D-019 rule)
+
+Nothing. D-009 ("key in the OS keyring") stays binding; this is what makes it
+true. The change adds transitive build dependencies per platform
+(`windows-sys`, `security-framework`, `dbus-secret-service`), which is why it
+is logged here (D-006).
+
+### Verification
+
+- Live in a real console: `key set` → `key status` **in a new process** →
+  `✓ OS keyring has key (21 chars)` → `key delete` → `✗ no API key
+  configured`. Windows Credential Manager listed the entry while it existed.
+- Windows verified live. macOS (`apple-native`) and Linux
+  (`linux-native-sync-persistent`, i.e. keyutils + Secret Service so the key
+  survives logout) use the stores the crate documents and are covered by the
+  release matrix, not by a live run here.
+
+### Trade-offs
+
+The Linux build now pulls a D-Bus client for persistence. `linux-native`
+alone would be smaller but loses the key at logout, which is the wrong
+default for a credential set once.
+
+## D-041 · A stalled stream is an error, not a wait (2026-09-09)
+
+**Decision:** The streaming reader stops at the `[DONE]` sentinel and treats
+120 s of silence as a failure. `[DONE]` means the answer is complete even if
+the provider leaves the connection open; silence means something is wrong and
+the user is told so.
+
+### Why
+
+A run hung with no way out: the debug log ended at `llm call started`, the
+session JSONL held the user's turn and no reply, and the TUI sat on
+"thinking" indefinitely. The reader loop only exited when the byte stream
+ended, and it skipped `[DONE]` as "not content" — so a provider or proxy that
+keeps the connection open after the sentinel leaves the client waiting for a
+close that never comes. MiniMax's legacy `chatcompletion_v2` endpoint behaves
+this way.
+
+### What it displaces (the D-019 rule)
+
+Nothing. Streaming stays the TUI's path (D-008); this is what makes it
+terminate.
+
+### Verification
+
+- A local stub that streams, sends `[DONE]`, then holds the connection open:
+  the answer completes in 0.8 s (it hung indefinitely before).
+- A stub that streams and then goes silent: after 120 s the transcript shows
+  `[stream aborted: stream stalled: no data for 120s (the provider kept the
+  connection open)]` with the partial text kept — and the
+  replace-partial-entry path in `apply_event` finally runs, having been
+  unreachable before.
+- 95/95 tests (new: `[DONE]` sets `SseDrain::done`), clippy `-D warnings`
+  and fmt clean, release build verified.
+
+### Trade-offs
+
+A model that thinks for more than 120 s without emitting a byte would be cut
+off. Reasoning models stream their thinking as deltas, so the timeout is a
+backstop rather than a policy; if a provider ever pauses longer, raise the
+constant instead of removing the guard.
+
+
