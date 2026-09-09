@@ -15,6 +15,7 @@
 
 mod prompts;
 mod store;
+mod text;
 mod tui;
 
 use anyhow::{Context, Result};

@@ -12,7 +12,7 @@ This file is part of the codebase. If you change the rules, change this file.
 Companion to `DECISIONS.md` (which answers "why?"). This answers
 "what?".
 
-Codebase at v0.10.0: ~8000 lines across `src/main.rs` + `src/tui.rs` + `src/store.rs`.
+Codebase at v0.10.0: ~8000 lines across `src/main.rs` + `src/tui.rs` + `src/store.rs` + `src/text.rs`.
 If you can read all three files end-to-end with this map in hand, you own the
 tool. If you can't, that's the part to study next.
 
@@ -166,7 +166,7 @@ tool. If you can't, that's the part to study next.
 
 ---
 
-## `src/tui.rs` (≈ 2930 lines)
+## `src/tui.rs` (≈ 2560 lines)
 
 ### Entry + lifecycle
 
@@ -192,7 +192,6 @@ tool. If you can't, that's the part to study next.
 | symbol | what it does |
 |--------|--------------|
 | `handle_key` | All key handling. Cursor-addressable editing: chars insert at `state.cursor`, Backspace/Delete/←/→/Home/End, Enter submits. While busy: only quit keys. |
-| `byte_index_of_char` / `input_window` | Char-index → byte offset for cursor ops; the visible input window (pins to the cursor on overflow, display-width based). |
 | `apply_completion` | Tab completion on first word. First Tab: longest-common-prefix extension. Repeated Tab: cycle through candidates. |
 | `longest_common_prefix` | Helper. |
 | `submit_line` | Dispatch a command. Routes to `help` / `/context` / `/clear` / `/model` / `/resume [file]` / the curated command map, else freeform. `@path` inlining before send. Every submission lands in `input_history` and the session log; an LLM response is logged on `Result(Ok)`. Spawns an async task that does the LLM call and pushes `Delta` events into `tx`. |
@@ -245,6 +244,25 @@ tool. If you can't, that's the part to study next.
 | `export_conversation` | Ctrl+S → write a markdown transcript to cwd (`naysay-<epoch>.md`). |
 | `play_sound` | Win32 `Beep` for submit / success / error. Off by default. No-op on non-Windows. |
 | `play_background_music` | Looping bassline (`--music` flag). No-op on non-Windows. |
+
+---
+
+## `src/text.rs` (≈ 290 lines)
+
+Pure text layout, extracted from `tui.rs` (D-023's 3000-line guardrail; D-035 M2).
+No terminal state, no I/O — every function here is unit-tested.
+
+| symbol | what it does |
+|--------|--------------|
+| `char_width` | Display width of one char: 2 for CJK / Hangul / fullwidth ranges, else 1 — the accounting terminals use for cursor placement and wrapping. |
+| `display_width` | Sum of `char_width` over a string. Canonical measure; production callers use `char_width` directly. |
+| `byte_index_of_char` | Char index → byte offset (cursor positions are char-based because CJK chars are one cursor step each). |
+| `input_window` | Visible window of the input around the cursor, plus the display width of the text before it, so the cursor lands correctly. Pins to the cursor on overflow. |
+| `flatten_line` / `row_from` | Internal wrap plumbing: `Line` → (style, char) stream and back into one owned row, merging adjacent same-style chars. |
+| `wrap_line_to_width` | Word-aware wrap of one line into rows that each fit `width` columns, styles preserved; unbreakable runs hard-split. |
+| `wrap_entry_lines` | Wrap every logical line of an entry; always returns at least one row. |
+
+Tests (8): `width_*` (3) and `wrap_*` (5).
 
 ---
 
