@@ -40,7 +40,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::io::Write;
 
-use crate::text::{byte_index_of_char, input_window, wrap_entry_lines};
+use crate::text::{byte_index_of_char, byte_prefix, input_window, wrap_entry_lines};
 use crate::{call_llm_stream, config, endpoint_host, load_api_key, open_session_log, Prompts};
 
 /// Append one line to the session debug log. Best-effort — never panics,
@@ -1708,28 +1708,29 @@ async fn run_explain<F: FnMut(&str) + Send>(
     prompts: &Prompts,
     on_delta: F,
 ) -> Result<String, String> {
-    let _ = prompts;
     let content = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
     let max_chars = 24_000;
     let truncated = if content.len() > max_chars {
         format!(
             "{}\n... (truncated, file is {} chars)",
-            &content[..max_chars],
+            byte_prefix(&content, max_chars),
             content.len()
         )
     } else {
         content
     };
-    let prompt = format!(
-        "Walk a developer through this file. Be concrete: name the actual \
+    const DEFAULT: &str = "Walk a developer through this file. Be concrete: name the actual \
          functions, structs, or blocks that matter. Skip boilerplate (imports, \
          constants, blank lines). For each non-trivial chunk, give intent \
          (what it is for) and mechanism (how it works) in one or two sentences \
          each. End with 2-4 questions the reader should think about, only \
          questions the code actually raises.\n\n\
          File: {path}\n\n\
-         Content:\n```\n{truncated}\n```"
-    );
+         Content:\n```\n{content}\n```";
+    let prompt = prompts
+        .get("explain", DEFAULT)
+        .replace("{path}", path)
+        .replace("{content}", &truncated);
     let body = call_llm_stream(model, &prompt, history, 2500, 0.4, on_delta)
         .await
         .map_err(|e| enrich_error(&format!("{e:#}")))?;
@@ -1750,26 +1751,27 @@ async fn run_summarize<F: FnMut(&str) + Send>(
     prompts: &Prompts,
     on_delta: F,
 ) -> Result<String, String> {
-    let _ = prompts;
     let content = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
     let max_chars = 24_000;
     let truncated = if content.len() > max_chars {
         format!(
             "{}\n... (truncated, file is {} chars)",
-            &content[..max_chars],
+            byte_prefix(&content, max_chars),
             content.len()
         )
     } else {
         content
     };
-    let prompt = format!(
-        "Summarize this file in 5-8 sentences. What does it do, what is its \
+    const DEFAULT: &str = "Summarize this file in 5-8 sentences. What does it do, what is its \
          role in the larger system, what are the key abstractions? Skip \
          boilerplate. The reader should be able to decide whether to read the \
          file in full after your summary.\n\n\
          File: {path}\n\n\
-         Content:\n```\n{truncated}\n```"
-    );
+         Content:\n```\n{content}\n```";
+    let prompt = prompts
+        .get("summarize", DEFAULT)
+        .replace("{path}", path)
+        .replace("{content}", &truncated);
     let body = call_llm_stream(model, &prompt, history, 800, 0.4, on_delta)
         .await
         .map_err(|e| enrich_error(&format!("{e:#}")))?;
@@ -1798,8 +1800,8 @@ async fn run_freeform<F: FnMut(&str) + Send>(
     prompts: &Prompts,
     on_delta: F,
 ) -> Result<String, String> {
-    let _ = prompts;
-    let content = call_llm_stream(model, input, history, 1500, 0.7, on_delta)
+    let prompt = prompts.get("freeform", "{input}").replace("{input}", input);
+    let content = call_llm_stream(model, &prompt, history, 1500, 0.7, on_delta)
         .await
         .map_err(|e| enrich_error(&format!("{e:#}")))?;
     if content.trim().is_empty() {
@@ -1936,7 +1938,7 @@ fn inline_files(line: &str) -> (String, InlineReport) {
                     let truncated = if content.len() > max_chars {
                         format!(
                             "{}\n... (truncated, file is {} chars)",
-                            &content[..max_chars],
+                            byte_prefix(content, max_chars),
                             content.len()
                         )
                     } else {
@@ -1964,7 +1966,7 @@ fn inline_files(line: &str) -> (String, InlineReport) {
                     let truncated = if content.len() > max_chars {
                         format!(
                             "{}\n... (truncated, file is {} chars)",
-                            &content[..max_chars],
+                            byte_prefix(&content, max_chars),
                             content.len()
                         )
                     } else {

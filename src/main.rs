@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Write};
 use std::sync::{Mutex, OnceLock};
 
+use crate::text::byte_prefix;
+
 /// The crate version, for every user-visible banner. Deriving it here (not
 /// hand-writing "v0.1" in three places) is the fix for the stale-banner bug
 /// found in v0.3.0: the first-run box kept saying v0.1 through four
@@ -356,6 +358,7 @@ pub(crate) struct Prompts {
     pub premortem: Option<String>,
     pub check: Option<String>,
     pub spec: Option<String>,
+    pub postmortem: Option<String>,
     pub pros: Option<String>,
     pub cons: Option<String>,
     pub risks: Option<String>,
@@ -397,28 +400,46 @@ impl Prompts {
             .unwrap_or_default()
     }
 
+    /// Every overridable key and its slot. `get` and the contract test both
+    /// read this table, so a key cannot ship without being documented in
+    /// `prompts.toml` and honoured by every surface.
+    fn overrides(&self) -> Vec<(&'static str, &Option<String>)> {
+        vec![
+            ("angles", &self.angles),
+            ("questions", &self.questions),
+            ("contrarian", &self.contrarian),
+            ("use_cases", &self.use_cases),
+            ("premortem", &self.premortem),
+            ("check", &self.check),
+            ("spec", &self.spec),
+            ("postmortem", &self.postmortem),
+            ("pros", &self.pros),
+            ("cons", &self.cons),
+            ("risks", &self.risks),
+            ("steps", &self.steps),
+            ("examples", &self.examples),
+            ("explain", &self.explain),
+            ("summarize", &self.summarize),
+            ("freeform", &self.freeform),
+        ]
+    }
+
     /// Resolve `key` against overrides, falling back to `default`.
     pub(crate) fn get<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
-        let opt = match key {
-            "angles" => &self.angles,
-            "questions" => &self.questions,
-            "contrarian" => &self.contrarian,
-            "use_cases" => &self.use_cases,
-            "premortem" => &self.premortem,
-            "check" => &self.check,
-            "spec" => &self.spec,
-            "pros" => &self.pros,
-            "cons" => &self.cons,
-            "risks" => &self.risks,
-            "steps" => &self.steps,
-            "examples" => &self.examples,
-            "explain" => &self.explain,
-            "summarize" => &self.summarize,
-            "freeform" => &self.freeform,
-            _ => &None,
-        };
-        opt.as_deref().unwrap_or(default)
+        self.overrides()
+            .into_iter()
+            .find(|(k, _)| *k == key)
+            .and_then(|(_, v)| v.as_deref())
+            .unwrap_or(default)
     }
+}
+
+/// Process-wide prompt overrides, initialized on first access. Every surface
+/// resolves templates through this, so `prompts.toml` behaves the same in the
+/// CLI, the REPL and the TUI (D-035).
+pub(crate) fn prompts() -> &'static Prompts {
+    static PROMPTS: OnceLock<Prompts> = OnceLock::new();
+    PROMPTS.get_or_init(Prompts::load)
 }
 
 /// Template written to `<data_dir>/prompts.toml` on first run. Every key is
@@ -439,6 +460,7 @@ const PROMPTS_TEMPLATE: &str = "\
 # premortem = \"Autopsy for {idea}.\"
 # check = \"Pre-existence check for {idea}.\"
 # spec = \"Spec for {idea}.\"
+# postmortem = \"Review of {idea}.\"
 # pros = \"Strengths of {idea}.\"
 # cons = \"Weaknesses of {idea}.\"
 # risks = \"Failure modes for {idea}.\"
@@ -446,6 +468,7 @@ const PROMPTS_TEMPLATE: &str = "\
 # examples = \"Real-world examples of {concept}.\"
 # explain = \"Walk through this file.\\nFile: {path}\\nContent:\\n{content}\"
 # summarize = \"Summarize this file.\\nFile: {path}\\nContent:\\n{content}\"
+# freeform = \"Answer the user's line directly: no placeholder is substituted.\"
 ";
 
 // ─── Provider config (naysay.toml) ──────────────────────────────────────────────────────
@@ -534,43 +557,24 @@ impl Config {
         issues
     }
 
-    /// Parse a naysay.toml body. Malformed TOML → defaults (same contract
-    /// as prompts.toml: a bad config file must never stop the tool from
-    /// starting).
-    fn parse(raw: &str) -> Self {
-        #[derive(Deserialize, Default)]
-        struct File {
-            #[serde(default)]
-            provider: Provider,
-        }
-        #[derive(Deserialize, Default)]
-        struct Provider {
-            chat_url: Option<String>,
-            model: Option<String>,
-            api_key_env: Option<String>,
-        }
-        let file = toml::from_str::<File>(raw).unwrap_or_default();
-        let d = Self::default();
-        Self {
-            chat_url: file.provider.chat_url.unwrap_or(d.chat_url),
-            model: file.provider.model.unwrap_or(d.model),
-            api_key_env: file.provider.api_key_env.unwrap_or(d.api_key_env),
-        }
-    }
-
     /// Load config from `<data_dir>/naysay.toml`, writing a documented
     /// template on first run. `NAYSAY_CHAT_URL` / `NAYSAY_MODEL` env vars
     /// override the file (CI escape hatch, same role as `api_key_env`).
-    fn load() -> Self {
+    ///
+    /// A malformed or invalid file is an error, never a fallback: the
+    /// defaults point at a *different provider*, so silently using them would
+    /// send prompts somewhere the user did not configure (D-043).
+    fn load() -> Result<Self> {
         let mut cfg = match data_dir() {
             Ok(dir) => {
                 let path = dir.join("naysay.toml");
                 if !path.exists() {
                     let _ = std::fs::write(&path, CONFIG_TEMPLATE);
                 }
-                std::fs::read_to_string(&path)
-                    .map(|raw| Self::parse(&raw))
-                    .unwrap_or_default()
+                let raw = std::fs::read_to_string(&path)
+                    .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
+                Self::parse_strict(&raw)
+                    .map_err(|e| anyhow::anyhow!("{} is malformed: {e}", path.display()))?
             }
             Err(_) => Self::default(),
         };
@@ -584,15 +588,40 @@ impl Config {
                 cfg.model = m;
             }
         }
-        cfg
+        let issues = cfg.validate();
+        if !issues.is_empty() {
+            anyhow::bail!("provider config is invalid: {}", issues.join("; "));
+        }
+        Ok(cfg)
     }
 }
 
 /// Process-wide config, initialized on first access. Every code path touches
 /// it before its first LLM call, so no explicit init step is needed.
 pub(crate) static CONFIG: OnceLock<Config> = OnceLock::new();
+
+/// Why the process-wide config fell back to defaults, if it did. A malformed
+/// `naysay.toml` is fatal for the caller (D-043) — the fallback is a
+/// different provider. `doctor` is the one command that reports it instead.
+static CONFIG_ERROR: OnceLock<Option<String>> = OnceLock::new();
+
 pub(crate) fn config() -> &'static Config {
-    CONFIG.get_or_init(Config::load)
+    CONFIG.get_or_init(|| match Config::load() {
+        Ok(cfg) => {
+            let _ = CONFIG_ERROR.set(None);
+            cfg
+        }
+        Err(e) => {
+            let _ = CONFIG_ERROR.set(Some(format!("{e:#}")));
+            Config::default()
+        }
+    })
+}
+
+/// The error behind a defaulted config, if any. Forces initialization.
+pub(crate) fn config_error() -> Option<&'static str> {
+    let _ = config();
+    CONFIG_ERROR.get().and_then(|e| e.as_deref())
 }
 
 /// Host of a chat URL, for display: `https://api.x.com/v1/chat` → `api.x.com`.
@@ -737,6 +766,18 @@ async fn main() -> Result<()> {
         set_interactive(
             !cli.json && std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
         );
+    }
+
+    // A broken provider config stops the run: the fallback config points at a
+    // different provider, and using it silently would send prompts somewhere
+    // the user did not choose (D-043). `doctor` is the diagnostic — it
+    // reports the problem instead of dying on it.
+    if !matches!(cli.command, Some(Command::Doctor)) {
+        if let Some(err) = config_error() {
+            eprintln!("naysay: {err}");
+            eprintln!("       fix or delete <data_dir>/naysay.toml, or run `naysay doctor`");
+            std::process::exit(2);
+        }
     }
 
     // --continue resolves to the newest session file up front, so a missing
@@ -1279,7 +1320,9 @@ async fn premortem(
     save_path: Option<&str>,
     json: bool,
 ) -> Result<String> {
-    let mut prompt = prompts::PREMORTEM.replace("{idea}", idea);
+    let mut prompt = prompts()
+        .get("premortem", prompts::PREMORTEM)
+        .replace("{idea}", idea);
     let ctx = store::resolve(&store::Op::Premortem, idea, parent);
     if !ctx.text.is_empty() {
         prompt = format!("{prompt}\n\n{}", ctx.text);
@@ -1343,7 +1386,9 @@ async fn check(
     save_path: Option<&str>,
     json: bool,
 ) -> Result<String> {
-    let mut prompt = prompts::CHECK.replace("{idea}", idea);
+    let mut prompt = prompts()
+        .get("check", prompts::CHECK)
+        .replace("{idea}", idea);
     let ctx = store::resolve(&store::Op::Check, idea, parent);
     if !ctx.text.is_empty() {
         prompt = format!("{prompt}\n\n{}", ctx.text);
@@ -1402,7 +1447,7 @@ async fn spec(
     save_path: Option<&str>,
     json: bool,
 ) -> Result<String> {
-    let mut prompt = prompts::SPEC.replace("{idea}", idea);
+    let mut prompt = prompts().get("spec", prompts::SPEC).replace("{idea}", idea);
     let ctx = store::resolve(&store::Op::Spec, idea, parent);
     if !ctx.text.is_empty() {
         prompt = format!("{prompt}\n\n{}", ctx.text);
@@ -1470,7 +1515,8 @@ async fn postmortem(
             .to_string(),
     };
 
-    let mut prompt = prompts::POSTMORTEM
+    let mut prompt = prompts()
+        .get("postmortem", prompts::POSTMORTEM)
         .replace("{idea}", idea)
         .replace("{notes}", &notes_block);
     let ctx = store::resolve(&store::Op::Postmortem, idea, parent);
@@ -1539,7 +1585,7 @@ async fn explain(
             content.len(),
             max_chars
         );
-        &content[..max_chars]
+        byte_prefix(&content, max_chars)
     } else {
         &content
     };
@@ -2974,24 +3020,27 @@ mod tests {
 
     #[test]
     fn config_parse_empty_is_defaults() {
-        let cfg = Config::parse("");
+        let cfg = Config::parse_strict("").expect("empty config parses");
         assert_eq!(cfg, Config::default());
     }
 
     #[test]
     fn config_parse_overrides_provider_table() {
-        let cfg = Config::parse(
+        let cfg = Config::parse_strict(
             "[provider]\nchat_url = \"http://localhost:11434/v1/chat/completions\"\nmodel = \"llama3\"\n",
-        );
+        )
+        .expect("valid toml parses");
         assert_eq!(cfg.chat_url, "http://localhost:11434/v1/chat/completions");
         assert_eq!(cfg.model, "llama3");
         assert_eq!(cfg.api_key_env, DEFAULT_API_KEY_ENV);
     }
 
     #[test]
-    fn config_parse_malformed_falls_back_to_defaults() {
-        let cfg = Config::parse("not [ valid toml {{{");
-        assert_eq!(cfg, Config::default());
+    fn config_parse_malformed_is_an_error() {
+        // A malformed provider file must not fall back to the default
+        // provider — that would silently send prompts to another vendor
+        // (D-043). The error is what `main` refuses to start on.
+        assert!(Config::parse_strict("not [ valid toml {{{").is_err());
     }
 
     // ─── endpoint_host ─────────────────────────────────────────────────────────
@@ -3054,6 +3103,46 @@ mod tests {
         assert!(!is_retryable_status(reqwest::StatusCode::UNAUTHORIZED));
         assert!(!is_retryable_status(reqwest::StatusCode::BAD_REQUEST));
         assert!(!is_retryable_status(reqwest::StatusCode::OK));
+    }
+
+    #[test]
+    fn every_prompt_key_is_documented_and_overridable() {
+        // The contract the review asked for: one prompt source per command,
+        // the same in every surface. A key that exists in the struct but not
+        // in the template (or vice versa) fails here, not in production.
+        let keys: Vec<&str> = Prompts::default()
+            .overrides()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        for key in &keys {
+            assert!(
+                PROMPTS_TEMPLATE.contains(key),
+                "prompts.toml template does not document `{key}`"
+            );
+        }
+        let body = format!(
+            "[prompts]
+{}
+",
+            keys.iter()
+                .map(|k| format!("{k} = \"OVERRIDE\""))
+                .collect::<Vec<_>>()
+                .join(
+                    "
+"
+                )
+        );
+        let filled: Prompts = toml::from_str::<PromptsFile>(&body)
+            .expect("every documented key deserializes")
+            .prompts;
+        for key in &keys {
+            assert_eq!(
+                filled.get(key, "DEFAULT"),
+                "OVERRIDE",
+                "key `{key}` ignores its prompts.toml override"
+            );
+        }
     }
 
     #[test]

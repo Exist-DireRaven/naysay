@@ -53,6 +53,21 @@ pub(crate) fn byte_index_of_char(s: &str, n: usize) -> usize {
     s.char_indices().nth(n).map(|(b, _)| b).unwrap_or(s.len())
 }
 
+/// Largest prefix of `s` that is at most `max_bytes` long and ends on a
+/// character boundary. `&s[..n]` panics when `n` lands inside a multi-byte
+/// character — which mixed ASCII/CJK files hit constantly at round numbers
+/// like 24_000.
+pub(crate) fn byte_prefix(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// The visible window of the input around the cursor, plus the display
 /// width of the text BEFORE the cursor inside that window (for cursor
 /// placement). Short input: whole string, cursor mid-window. Overflow:
@@ -290,5 +305,21 @@ mod tests {
         let rows = wrap_line_to_width(&Line::from(""), 80);
         assert_eq!(rows.len(), 1);
         assert_eq!(row_text(&rows[0]), "");
+    }
+
+    #[test]
+    fn byte_prefix_stops_on_a_char_boundary() {
+        assert_eq!(byte_prefix("hello", 10), "hello");
+        assert_eq!(byte_prefix("hello", 3), "hel");
+        // A cut inside a CJK character backs up instead of panicking.
+        let mixed = "abc中文def";
+        assert_eq!(byte_prefix(mixed, 4), "abc");
+        assert_eq!(byte_prefix(mixed, 6), "abc中");
+        assert_eq!(byte_prefix("中文", 1), "");
+        assert_eq!(byte_prefix("", 0), "");
+        // Every prefix is a valid &str for any byte budget.
+        for n in 0..=mixed.len() {
+            let _ = byte_prefix(mixed, n);
+        }
     }
 }

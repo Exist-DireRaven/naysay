@@ -16,7 +16,14 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
-### naysay v0.3.0 — 2026-09-09 *(unpublished)*
+### naysay v0.11.0 — 2026-09-10 *(unpublished)*
+
+**The version line restarts, and the first-run flow actually works.**
+Two things landed together. The numbering no longer tries to continue a
+retired internal line — the public releases are `0.1.0`, `0.2.0` and now
+`0.11.0`, and no number is ever reused. And walking the documented first-run
+flow end to end surfaced four defects that made it fail; all four are fixed,
+and the run is now the README's worked example. Per D-042 … D-044.
 
 **Onboarding runs where the need is, not where the program started.**
 `naysay check "…"` on a fresh machine answered `no API key` and stopped,
@@ -43,6 +50,13 @@ model call, on every surface. Per D-034.
   `drill`, `premortem`, `spec`, then `postmortem --parent` and calibration —
   with the actual output, in both languages. It is the tutorial the first-run
   flow never had.
+
+#### Added
+
+- **A version-line reset (D-042).** Public releases are `0.1.0`, `0.2.0` and
+  now `0.11.0`; the tags `v0.2.0`–`v0.7.0` belong to the retired internal
+  line and are never reused. The release workflow refuses to build when the
+  tag and `Cargo.toml` disagree.
 
 #### Changed
 
@@ -103,6 +117,24 @@ model call, on every surface. Per D-034.
 - **`doctor`'s hint names the configured variable.** It always said
   `NAYSAY_API_KEY`, even when `naysay.toml` expected a different
   `api_key_env` — following the hint could leave the key unread.
+- **A malformed `naysay.toml` stops the run (D-043).** The parser used to fall
+  back to the embedded defaults on a TOML error — which are a *different
+  provider*, so a typo could silently send prompts to a vendor the user never
+  configured. Only `doctor` still starts on a broken config; it reports it.
+- **Truncation cannot panic on a character boundary.** Five sites sliced
+  `&content[..24_000]`, which panics when the byte lands inside a multi-byte
+  character — the common case for mixed ASCII/CJK files. `text::byte_prefix`
+  backs up to the nearest boundary.
+- **Every `prompts.toml` key is live.** `postmortem` had no field, so the TUI
+  read a key that did not exist; `explain` / `summarize` / `freeform` accepted
+  overrides that no call site consulted. The CLI's verdict commands now honour
+  the file too, and a contract test keeps every key documented and
+  overridable.
+- **The store is durable and project-scoped (D-044).** Records carry a
+  `schema_version` (absent = legacy, still readable), every store write goes
+  through a temp-file + rename, unreadable records are reported instead of
+  silently skipped, and a decision session from another project is no longer
+  injected into the current one's prompts.
 
 #### Notes
 
@@ -129,10 +161,12 @@ model call, on every surface. Per D-034.
 
 ---
 
-> **Version-line note (2026-09-09).** `0.1.0` was the only published release.
+> **Version-line note (2026-09-10).** `0.1.0` was the only published release.
 > `0.2.0`–`0.10.0` were internal iterations that never reached crates.io;
-> they are archived as a git bundle plus a source zip. This release publishes
-> their combined result as **0.2.0** — the second public release. The internal
+> they are archived as a git bundle plus a source zip. `0.2.0` published their
+> combined result as the second public release. The public line continues with
+> **0.11.0** (D-042): the first number after the retired internal line, chosen
+> so that no existing tag (`v0.2.0`–`v0.7.0`) is ever reused. The internal
 > entries below are kept for lineage, and their version numbers do not
 > correspond to published artifacts.
 

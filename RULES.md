@@ -4,7 +4,7 @@ One page. Currently binding rules only, each pointing at the decision that
 established it. The reasoning and the lineage live in
 [DECISIONS.md](DECISIONS.md), which is append-only — nothing there is deleted.
 
-*Last reconciled against D-039. If this file and an entry disagree, the entry
+*Last reconciled against D-044. If this file and an entry disagree, the entry
 wins and this file is wrong.*
 
 ## What naysay is
@@ -28,6 +28,13 @@ wins and this file is wrong.*
 - **Key in the OS keyring; the `api_key_env` variable overrides it.** — D-009
 - **The store is plain JSON files in the working directory.** No index, no
   database, no migration. — D-021
+- **The store is versioned, atomically written and project-scoped.** Records
+  carry a `schema_version`; writes go through temp-file + rename; a session
+  from another directory is never injected (pre-D-044 sessions adopt
+the first directory that loads them). — D-044
+- **Security-relevant configuration fails closed.** A malformed provider file
+  stops the run; only prompt templates may fall back to their defaults.
+  — D-043
 
 ## Governance
 
@@ -38,6 +45,8 @@ wins and this file is wrong.*
   has been used. — D-019
 - **"Clippy 0 warnings" is verified in CI**, not locally. — D-018
 - **CODEMAP.md is updated in the same edit** as any function change. — AGENTS.md
+- **Version numbers are never reused**, and the release tag must match
+  `Cargo.toml`; the release workflow enforces it. — D-042
 - **Module boundaries are argued, not budgeted.** Extract when a file has
   grown beyond comprehension or lost cohesion — never to satisfy a line
   count. The LOC guardrail (`main.rs` ≤ 4000, `tui.rs` ≤ 3000) is retired.

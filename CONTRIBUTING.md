@@ -77,7 +77,8 @@ key-leak handling.
 
 The [RuFlow list](DECISIONS.md) — plugin systems, GUI frontends,
 provider abstraction layers, telemetry. naysay is deliberately small:
-one binary, no runtime deps, ~4k lines. Features that grow it past
+one binary, no runtime deps, a module layout `CODEMAP.md` keeps honest.
+Features that grow it past
 comprehension get rejected regardless of quality.
 
 ---
@@ -149,5 +150,5 @@ commit。
 ### 不合并的清单
 
 [RuFlow 列表](DECISIONS.md):插件系统、GUI 抽象层、provider 适配
-层、telemetry。naysay 故意做小:一个二进制、零运行时依赖、约 4k 行。
+层、telemetry。naysay 故意做小:一个二进制、零运行时依赖,模块划分由 `CODEMAP.md` 保持诚实。
 让它长大到"超出理解范围"的功能,无论质量高低都不收。

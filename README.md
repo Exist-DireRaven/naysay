@@ -385,7 +385,7 @@ mid-task — lives in a separate repo, `naysay-agent` (D-033).
 The tool runs on itself. Current state, queryable in this repo:
 
 ```
-logged decisions   : 40 (DECISIONS.md D-001 … D-041; D-027 unused)
+logged decisions   : 43 (DECISIONS.md D-001 … D-044; D-027 unused)
 kill cases         : 2 published (examples/) — incl. this tool's predecessor
 survivor           : the tool you are reading
 assumption registry: live (UNKNOWN → VALID/INVALIDATED lifecycle)
@@ -704,7 +704,7 @@ coding agent 在任务中途的那条 skill——在独立仓库 `naysay-agent`�
 这个工具跑在自己身上。当前状态，本仓库内可查：
 
 ```
-已入档决策   : 40 条（DECISIONS.md D-001 … D-041；D-027 未使用）
+已入档决策   : 43 条（DECISIONS.md D-001 … D-044；D-027 未使用）
 杀掉的项目   : 2 个已发布案例（examples/）—— 包括本工具的前身
 幸存者       : 你正在读的这个工具
 calibration  : naysay calibration（等真实决策闭环积累）

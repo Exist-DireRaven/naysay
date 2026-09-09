@@ -7,6 +7,7 @@
 use crate::{data_dir, session_dir};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::PathBuf;
 
 // ─── v0.3 decision store ──────────────────────────────────────────────────────────────────────
@@ -42,6 +43,30 @@ pub(crate) struct DecisionRecord {
     /// v0.5: "BUILT" | "KILLED" | "ABANDONED" | "UNKNOWN" — what actually
     /// happened, extracted from the postmortem's CALIBRATION section.
     pub outcome: Option<String>,
+    /// Format version of this record. Absent in files written before D-044;
+    /// `serde(default)` reads those as 0 (legacy, still valid).
+    #[serde(default)]
+    pub schema_version: u32,
+}
+
+/// Current on-disk record format. Bump when a change cannot be read by the
+/// previous code; readers must keep accepting older versions.
+pub(crate) const SCHEMA_VERSION: u32 = 1;
+
+/// Write `bytes` to `path` through a temp file in the same directory and a
+/// rename, so a crash leaves the previous content instead of a truncated
+/// file. Read-modify-write data (registry, sessions, the current pointer)
+/// shares these files with a second terminal if the user runs naysay twice
+/// (D-044).
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension("tmp");
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
 }
 
 /// The store lives in the current working directory: `.naysay/decisions/`.
@@ -222,9 +247,10 @@ pub(crate) fn save_decision_to(
             confidence: extract_confidence(body),
             verdict: extract_verdict(body),
             outcome: extract_outcome(body),
+            schema_version: SCHEMA_VERSION,
         };
         let json = serde_json::to_string_pretty(&rec).map_err(std::io::Error::other)?;
-        std::fs::write(&path, json)?;
+        write_atomic(&path, json.as_bytes())?;
 
         // v0.7: assumptions enter the lifecycle registry; postmortems may
         // flip their statuses. Registry failures must not lose the record
@@ -688,7 +714,7 @@ fn save_registry(dir: &std::path::Path, reg: &[Assumption]) -> Result<()> {
     let path = assumptions_path(dir);
     std::fs::create_dir_all(path.parent().unwrap_or(dir))?;
     let json = serde_json::to_string_pretty(reg)?;
-    std::fs::write(path, json).context("write output file")?;
+    write_atomic(&path, json.as_bytes()).context("write assumption registry")?;
     Ok(())
 }
 
@@ -996,6 +1022,10 @@ pub(crate) struct DecisionSession {
     pub version: u32,
     pub id: String,
     pub root_idea: String,
+    /// Working directory this session belongs to. Absent in sessions written
+    /// before D-044 — those are grandfathered rather than dropped.
+    #[serde(default)]
+    pub project_root: String,
     pub created_ts: u64,
     pub updated_ts: u64,
     pub steps: Vec<SessionStep>,
@@ -1007,6 +1037,7 @@ impl DecisionSession {
             version: 1,
             id: format!("ds-{}", ts),
             root_idea: root_idea.to_string(),
+            project_root: current_project_root(),
             created_ts: ts,
             updated_ts: ts,
             steps: Vec::new(),
@@ -1060,6 +1091,22 @@ impl DecisionSession {
     }
 }
 
+/// The cwd a decision session belongs to. The store is per-project
+/// (`.naysay/decisions/` in the cwd) but the session pointer is global, so
+/// without this a session started in project A would be injected into
+/// project B's prompts (D-044).
+pub(crate) fn current_project_root() -> String {
+    std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default()
+}
+
+/// Whether `session` may be injected into the current project's prompts.
+/// Sessions written before D-044 carry no `project_root` and are grandfathered.
+pub(crate) fn session_matches_project(session: &DecisionSession, cwd: &str) -> bool {
+    session.project_root.is_empty() || session.project_root == cwd
+}
+
 /// Digest of an LLM output: first 2 non-empty lines joined, capped at 240
 /// chars. This is the currency of context assembly — full text lives in
 /// the step, only the digest enters the prompt budget.
@@ -1092,7 +1139,7 @@ pub(crate) fn save_decision_session(session: &DecisionSession) -> Result<()> {
     let path = decision_session_path(&session.id)?;
     let json =
         serde_json::to_string_pretty(session).map_err(|e| std::io::Error::other(e.to_string()))?;
-    std::fs::write(path, json).context("write output file")?;
+    write_atomic(&path, json.as_bytes()).context("write decision session")?;
     Ok(())
 }
 
@@ -1129,7 +1176,7 @@ pub(crate) fn save_current_session(session: &DecisionSession) -> Result<()> {
 }
 
 pub(crate) fn set_current_session(id: &str) -> Result<()> {
-    std::fs::write(current_session_pointer()?, id).context("write session pointer")?;
+    write_atomic(&current_session_pointer()?, id.as_bytes()).context("write session pointer")?;
     Ok(())
 }
 
@@ -1440,6 +1487,7 @@ pub(crate) fn run_context_manifest(idea: &str) -> Result<()> {
 /// Load all decision records from the store, sorted by timestamp.
 pub(crate) fn load_all_records(dir: &std::path::Path) -> Vec<DecisionRecord> {
     let mut out = Vec::new();
+    let mut corrupt = 0usize;
     if let Ok(entries) = std::fs::read_dir(dir) {
         let mut paths: Vec<std::path::PathBuf> = entries
             .filter_map(|e| e.ok())
@@ -1448,12 +1496,22 @@ pub(crate) fn load_all_records(dir: &std::path::Path) -> Vec<DecisionRecord> {
             .collect();
         paths.sort();
         for path in paths {
-            if let Ok(raw) = std::fs::read_to_string(&path) {
-                if let Ok(rec) = serde_json::from_str::<DecisionRecord>(&raw) {
-                    out.push(rec);
-                }
+            match std::fs::read_to_string(&path) {
+                Ok(raw) => match serde_json::from_str::<DecisionRecord>(&raw) {
+                    Ok(rec) => out.push(rec),
+                    Err(_) => corrupt += 1,
+                },
+                Err(_) => corrupt += 1,
             }
         }
+    }
+    // A record that cannot be read is a fact about the store, not noise to
+    // swallow: the long-term memory is the product (D-044).
+    if corrupt > 0 && !crate::tui_active() {
+        eprintln!(
+            "decision-store: {corrupt} unreadable record(s) in {} — skipped",
+            dir.display()
+        );
     }
     out
 }
@@ -1499,18 +1557,39 @@ pub(crate) fn resolve(op: &Op, idea: &str, parent: Option<&str>) -> SelectedCont
     let mut blocks: Vec<String> = Vec::new();
 
     // ── Session exploration ──
-    if let Some(session) = load_current_session() {
-        ctx.session_id = Some(session.id.clone());
-        ctx.root_idea = Some(session.root_idea.clone());
-        let block = assemble_session_block(op, &session, now);
-        if !block.is_empty() {
-            blocks.push(block);
+    if let Some(mut session) = load_current_session() {
+        // The session pointer is global; the store is per-project. Injecting
+        // another project's exploration is worse than injecting nothing
+        // (D-044), so a mismatch is reported and skipped. A session written
+        // before D-044 has no project: it adopts the first project that loads
+        // it, which closes the leak without dropping the user's exploration.
+        let cwd = current_project_root();
+        if session.project_root.is_empty() {
+            session.project_root = cwd.clone();
+            let _ = save_decision_session(&session);
         }
-        ctx.exploration_count = session
-            .steps
-            .iter()
-            .filter(|s| matches!(s.op, Op::Seed | Op::Drill))
-            .count();
+        if !session_matches_project(&session, &cwd) {
+            let msg = format!(
+                "session {} belongs to {} — not injecting it here (naysay session close)",
+                session.id, session.project_root
+            );
+            if !crate::tui_active() {
+                eprintln!("naysay: {msg}");
+            }
+            ctx.warnings.push(msg);
+        } else {
+            ctx.session_id = Some(session.id.clone());
+            ctx.root_idea = Some(session.root_idea.clone());
+            let block = assemble_session_block(op, &session, now);
+            if !block.is_empty() {
+                blocks.push(block);
+            }
+            ctx.exploration_count = session
+                .steps
+                .iter()
+                .filter(|s| matches!(s.op, Op::Seed | Op::Drill))
+                .count();
+        }
     }
 
     // ── Historical decisions (premortem, check and seed only —
@@ -1762,6 +1841,41 @@ mod tests {
         assert_eq!(extract_confidence("CONFIDENCE: 62\n"), Some(62));
         assert_eq!(extract_confidence("置信度\n\n0.7\n"), Some(70));
         assert_eq!(extract_confidence("no confidence here\n"), None);
+    }
+
+    #[test]
+    fn legacy_record_without_schema_version_parses() {
+        // Files written before D-044 carry no schema_version; they must keep
+        // loading (as version 0) instead of vanishing from the store.
+        let legacy = r#"{"id":"abc123","kind":"check","ts":1,"idea":"x","parent":null,
+            "body":"b","assumptions":[],"evidence":[],"unknowns":[],
+            "failure_conditions":[],"confidence":null,"verdict":null,"outcome":null}"#;
+        let rec: DecisionRecord = serde_json::from_str(legacy).expect("legacy record parses");
+        assert_eq!(rec.schema_version, 0);
+    }
+
+    #[test]
+    fn session_matches_project_gates_foreign_sessions() {
+        let mut session = DecisionSession::new("idea", 1);
+        session.project_root = "C:/work/a".into();
+        assert!(session_matches_project(&session, "C:/work/a"));
+        assert!(!session_matches_project(&session, "C:/work/b"));
+        session.project_root.clear();
+        assert!(
+            session_matches_project(&session, "C:/work/b"),
+            "sessions written before D-044 are grandfathered"
+        );
+    }
+
+    #[test]
+    fn save_writes_atomically_and_leaves_no_temp() {
+        let dir = tmp_store("atomic");
+        let id = save_decision_to(&dir, "check", "x", "VERDICT: BUILD", None, 1).unwrap();
+        assert!(
+            !dir.join(format!("check-{id}.tmp")).exists(),
+            "temp file left behind"
+        );
+        assert!(read_record_by_id(&dir, &id).is_some());
     }
 
     #[test]

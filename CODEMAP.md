@@ -12,14 +12,14 @@ This file is part of the codebase. If you change the rules, change this file.
 Companion to `DECISIONS.md` (which answers "why?"). This answers
 "what?".
 
-Codebase at v0.10.0: ~9000 lines across `src/main.rs` + `src/tui.rs` +
+Codebase at v0.11.0: ~9400 lines across `src/main.rs` + `src/tui.rs` +
 `src/store.rs` + `src/text.rs` + `src/workspace.rs`.
 If you can read all three files end-to-end with this map in hand, you own the
 tool. If you can't, that's the part to study next.
 
 ---
 
-## `src/main.rs` (≈ 3400 lines)
+## `src/main.rs` (≈ 3490 lines)
 
 ### CLI layer
 
@@ -59,9 +59,9 @@ tool. If you can't, that's the part to study next.
 
 | symbol | what it does |
 |--------|--------------|
-| `Config` | chat_url + model + api_key_env. Loaded from `<data_dir>/naysay.toml`. `OnceLock` for process-wide singleton. |
-| `Config::parse` | Parses TOML. Malformed → defaults. Missing fields → defaults. |
-| `Config::load` | Reads file, writes template on first run, applies env-var overrides, returns. |
+| `Config` | chat_url + model + api_key_env. Loaded from `<data_dir>/naysay.toml`. `OnceLock` for process-wide singleton. A malformed or invalid file is fatal — `config_error()` carries the reason and `main` refuses to run (D-043). |
+| `Config::parse_strict` | Parses TOML, surfacing errors. Missing fields → defaults; malformed → `Err` (D-043). |
+| `Config::load` | Reads the file, writes the template on first run, applies env-var overrides, validates, returns `Result`. |
 | `config()` | Public accessor. First call initializes. |
 | `endpoint_host` | Display helper. `https://api.x.com/v1/chat` → `api.x.com`. |
 | `CONFIG_TEMPLATE` | What `naysay.toml` looks like on first run — all the provider examples commented out for discoverability. |
@@ -72,10 +72,10 @@ tool. If you can't, that's the part to study next.
 
 | symbol | what it does |
 |--------|--------------|
-| `Prompts` | Optional overrides for every command's prompt template. One field per command. |
+| `Prompts` | Optional overrides for every command's prompt template (incl. `postmortem`). One field per command. |
 | `PromptsFile` | TOML wrapper — the file has a `[prompts]` table. |
 | `Prompts::load` | Reads `<data_dir>/prompts.toml`, writes template on first run, falls back to defaults on any error. |
-| `Prompts::get` | Lookup by key, returns user override or default. |
+| `Prompts::overrides` / `get` | The key table every surface resolves through; `get` returns the user override or the default. A contract test keeps every key documented in `prompts.toml` and honoured by all surfaces. |
 | `PROMPTS_TEMPLATE` | What `prompts.toml` looks like on first run — every key shown but commented. |
 
 ### System prompt
@@ -167,7 +167,7 @@ tool. If you can't, that's the part to study next.
 
 ---
 
-## `src/tui.rs` (≈ 2615 lines)
+## `src/tui.rs` (≈ 2630 lines)
 
 ### Entry + lifecycle
 
@@ -250,7 +250,7 @@ tool. If you can't, that's the part to study next.
 
 ---
 
-## `src/store.rs` (≈ 1890 lines)
+## `src/store.rs` (≈ 2070 lines)
 
 The decision store, the assumption registry and the decision sessions. All
 deterministic — no LLM calls (D-023) — and cwd-local plain JSON (D-021):
@@ -260,11 +260,12 @@ deterministic — no LLM calls (D-023) — and cwd-local plain JSON (D-021):
 
 | symbol | what it does |
 |--------|--------------|
-| `DecisionRecord` | One saved decision: id, kind, ts, idea, parent, body, the extracted sections, confidence, verdict, outcome. |
+| `DecisionRecord` | One saved decision: id, kind, ts, idea, parent, body, the extracted sections, confidence, verdict, outcome, `schema_version` (absent = legacy). |
 | `decisions_dir` / `make_decision_id` | `.naysay/decisions/`; 12 hex chars from wall-clock nanos, retried on collision. |
 | `save_decision_to` / `save_decision` / `save_verdict` | Write one record; `save_verdict` also records the session step (D-031). `parent` is normalized through `bare_id`. |
 | `bare_id` | Both printed id forms (`hex` and `kind-hex`) resolve to the bare hex, so links and calibration pair up either way. |
-| `read_record_by_id` / `load_all_records` | Lookup by either id form; load the whole store sorted by time. |
+| `write_atomic` / `SCHEMA_VERSION` | Every store write goes through temp-file + rename; `SCHEMA_VERSION` is stamped on new records (D-044). |
+| `read_record_by_id` / `load_all_records` | Lookup by either id form; load the whole store sorted by time. Unreadable records are counted and reported, never silently dropped. |
 | `run_d_by_id` / `run_d_unknowns` / `run_d_link` | `decisions show` / `unknowns` / `link`. |
 
 ### Extraction (substring scans, never validated)
@@ -298,6 +299,7 @@ deterministic — no LLM calls (D-023) — and cwd-local plain JSON (D-021):
 | `output_digest_of` | First 2 non-empty lines, capped at 240 chars — the currency of context assembly. |
 | `save_decision_session` / `load_decision_session` / `list_decision_sessions` | `.naysay/sessions/ds-<epoch>.json`. |
 | `current_session_pointer` / `load_current_session` / `save_current_session` / `set_current_session` / `clear_current_session` | The `.naysay/session-current` pointer. |
+| `current_project_root` / `session_matches_project` | Sessions record the cwd they belong to; a foreign session is not injected (legacy sessions are grandfathered) — D-044. |
 | `assemble_session_block` / `record_session_step` | Build the context block for one op; append a step (auto-create is the caller's choice, D-037). |
 | `run_session_start` / `list` / `show` / `resume` / `close` / `run_context_manifest` | The `session` and `context` subcommands. |
 
@@ -306,7 +308,7 @@ deterministic — no LLM calls (D-023) — and cwd-local plain JSON (D-021):
 | symbol | what it does |
 |--------|--------------|
 | `SelectedContext` | What one operation will see, by source: the assembled text plus provenance counts and warnings. |
-| `resolve` | The single place that decides context per op — session exploration, top-N historical verdicts, assumption risks, MEMORY RULES. |
+| `resolve` | The single place that decides context per op — session exploration (project-checked), top-N historical verdicts, assumption risks, MEMORY RULES. |
 
 ---
 
@@ -334,7 +336,7 @@ asserts all three panes draw.
 
 ---
 
-## `src/text.rs` (≈ 290 lines)
+## `src/text.rs` (≈ 325 lines)
 
 Pure text layout, extracted from `tui.rs` for the workspace work (D-035 M2).
 No terminal state, no I/O — every function here is unit-tested.
@@ -344,6 +346,7 @@ No terminal state, no I/O — every function here is unit-tested.
 | `char_width` | Display width of one char: 2 for CJK / Hangul / fullwidth ranges, else 1 — the accounting terminals use for cursor placement and wrapping. |
 | `display_width` | Sum of `char_width` over a string. Canonical measure; production callers use `char_width` directly. |
 | `byte_index_of_char` | Char index → byte offset (cursor positions are char-based because CJK chars are one cursor step each). |
+| `byte_prefix` | Largest char-boundary-safe prefix ≤ N bytes — `&s[..n]` panics on mixed ASCII/CJK input. |
 | `input_window` | Visible window of the input around the cursor, plus the display width of the text before it, so the cursor lands correctly. Pins to the cursor on overflow. |
 | `flatten_line` / `row_from` | Internal wrap plumbing: `Line` → (style, char) stream and back into one owned row, merging adjacent same-style chars. |
 | `wrap_line_to_width` | Word-aware wrap of one line into rows that each fit `width` columns, styles preserved; unbreakable runs hard-split. |

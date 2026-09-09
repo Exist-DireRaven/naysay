@@ -1292,4 +1292,137 @@ off. Reasoning models stream their thinking as deltas, so the timeout is a
 backstop rather than a policy; if a provider ever pauses longer, raise the
 constant instead of removing the guard.
 
+## D-042 · The version line restarts at 0.11.0 (2026-09-10)
 
+**Decision:** The next release is `0.11.0`. Public releases are `0.1.0`,
+`0.2.0`, `0.11.0`; no number is ever reused, and the release workflow refuses
+to build when the pushed tag and `Cargo.toml` disagree.
+
+### Why
+
+An external review of the project (GPT-5.6, 2026-09-09) named release
+identity as the most visible defect, and it was right: `Cargo.toml` said
+`0.3.0`, the CHANGELOG marked `0.3.0` unpublished, crates.io served `0.2.0`,
+GitHub's latest release was `v0.7.0`, and the tag list already contained
+`v0.2.0` and `v0.3.0`. A user could not tell which version was newer, a bug
+report could not be tied to a commit, and `0.3.0` could never be published
+because its tag already exists.
+
+The internal line (`0.2.0`–`0.10.0`) was real work, but it was never
+published, and its tags squat on the numbers the public line would use next.
+Rewriting tags would rewrite shared history; continuing at `0.3.0` is
+impossible. The cheapest honest fix is to jump past the retired line:
+`0.11.0`.
+
+### What it displaces (the D-019 rule)
+
+Nothing. It replaces an implicit practice — "the number in `Cargo.toml` is
+whatever the CHANGELOG's top entry says" — with a rule CI checks.
+
+### Verification
+
+- `Cargo.toml` is `0.11.0`; the CHANGELOG's top entry is `v0.11.0`; the
+  version-line note explains the gap.
+- The release workflow extracts the version from `Cargo.toml` and fails when
+  the tag disagrees.
+- `SECURITY.md` lists `0.11.x` as supported; `CONTRIBUTING.md` no longer
+  claims a line count it cannot keep.
+
+### Trade-offs
+
+The gap between `0.2.0` and `0.11.0` looks strange for a moment. The
+alternative — reusing a tagged number — makes the tag, the crates.io artifact
+and the changelog disagree forever.
+
+## D-043 · A broken provider config stops the run (2026-09-10)
+
+**Decision:** A `naysay.toml` that fails to parse, or whose fields fail
+validation, aborts the command with a non-zero exit. Only `doctor` still
+starts on a broken config — it is the diagnostic that reports it.
+
+### Why
+
+The old contract was explicit in the code: "a bad config file must never stop
+the tool from starting". That is the right contract for `prompts.toml`, whose
+fallback is the embedded text of the same command. It is the wrong contract
+for the provider, because the fallback values are *a different vendor's
+endpoint*: a user who configured a local Ollama and made a TOML typo would
+have had their prompts sent to the default cloud endpoint, silently.
+
+The review put it plainly: a tool that handles source code and API keys must
+fail closed on security-relevant configuration. Prompt templates may fall
+back; endpoint, model and key-var must not.
+
+### What it displaces (the D-019 rule)
+
+The forgiving-fallback clause of `Config::parse`. `prompts.toml` keeps its
+forgiving behaviour, because its fallback is not a different destination.
+
+### Verification
+
+- `Config::parse_strict` is now the only parser; `config_error()` exposes the
+  failure and `main` exits 2 with the file path and the fix.
+- Live: a deliberately malformed `naysay.toml` makes `naysay check "x"` exit
+  without sending a request; `naysay doctor` still runs and reports it;
+  restoring the file restores the command.
+- Unit: `config_parse_malformed_is_an_error`.
+
+### Trade-offs
+
+A typo now blocks every command instead of quietly working. That is the point
+— the quiet version was the bug — so the error has to carry the fix, which is
+why it names the file and points at `doctor`.
+
+## D-044 · The store is durable and project-scoped (2026-09-10)
+
+**Decision:** Three changes to the on-disk decision data. Records carry a
+`schema_version` (absent means legacy, still readable). Every store write goes
+through a temp file and a rename. A decision session records the
+`project_root` it belongs to, and a session from another directory is not
+injected into the current project's prompts. A session written before this
+entry has no project: it adopts the first directory that loads it.
+
+### Why
+
+The store is the product's moat — the review's words, and the reason the tool
+exists — and it was the least protected part of the codebase:
+
+- **No version.** `DecisionRecord` documented the absence as a feature ("the
+  shape may drift because the user owns the file"). For a long-term memory
+  that is a liability: the first incompatible change would silently orphan
+  every old file.
+- **No atomicity.** Twenty `std::fs::write` calls, including the assumption
+  registry and the session pointer, which are read-modify-write. Two
+  terminals, or one crash, could leave a truncated file where a registry used
+  to be.
+- **No project scoping.** Decisions are cwd-local (D-021) but the current
+  session pointer is global, and `DecisionSession` carried no project
+  identity. Start a session in project A, switch to project B, and B's
+  prompts inherit A's exploration.
+
+### What it displaces (the D-019 rule)
+
+The "no schema field, grep is the API" trade-off recorded in the store's own
+doc comment. Grep still works; it is no longer the only reader.
+
+### Verification
+
+- Unit: a record JSON without `schema_version` parses as version 0; a save
+  leaves no `.tmp` behind; `session_matches_project` rejects a foreign session.
+- Live: a legacy session was observed leaking its steps into an unrelated
+  project's prompt (the model answered a dark-mode question with the previous
+  project's history). After the change the same session adopts the first
+  project that loads it and stops leaking.
+- The registry, decision sessions and the current pointer all write through
+  `write_atomic`.
+- Unreadable records are counted and reported instead of skipped in silence.
+
+### Trade-offs
+
+`schema_version` is written but not yet acted on — there is nothing to
+migrate. The point is that the first incompatible change has somewhere to
+hook in. Project scoping can surprise a user who legitimately wants one
+session across two checkouts of the same project; the warning names the
+session and the directory, and `naysay session resume` re-homes it. Adoption
+on first load means a legacy session's home is wherever it happens to be
+loaded next — the best available guess, not a certainty.

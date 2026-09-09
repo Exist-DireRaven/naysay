@@ -1241,7 +1241,7 @@ dependencies = [
 
 [[package]]
 name = "naysay"
-version = "0.3.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",

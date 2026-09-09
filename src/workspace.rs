@@ -668,6 +668,7 @@ mod tests {
             confidence: None,
             verdict: verdict.map(str::to_string),
             outcome: None,
+            schema_version: 0,
         }
     }
 
