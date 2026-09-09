@@ -870,6 +870,8 @@ already existed on both paths.
 
 ## D-032 · Deferred — standalone CLI commands inherit an auto-created session (2026-09-09)
 
+**Resolved by D-037 (2026-09-09).**
+
 **Finding:** every verdict command on the CLI path calls
 `record_session_step(..., auto_create = true)`. The first standalone
 `naysay check` therefore creates a decision session rooted at its own idea,
@@ -1064,3 +1066,32 @@ presentation fix.
 Two files to keep in sync. The mitigation is the update rule above plus a
 "last reconciled against D-0NN" line at the top of `RULES.md`, so drift is
 visible rather than silent.
+
+## D-037 · D-032 resolved: only the REPL auto-creates a session (2026-09-09)
+
+**Decision:** `record_session_step`'s `auto_create` argument is now supplied
+by `session_autocreate()`, which is true only inside the REPL. A one-shot CLI
+command still records into an *existing* session (started explicitly with
+`naysay session start`) but never creates one.
+
+### Why
+
+D-032 recorded the failure and set its own re-open condition: "the first time
+a standalone CLI run answers the wrong question again". That happened during
+v0.10 dogfooding — the first GIF check answered the previous TUI question,
+because a session rooted at the earlier idea had been injected ahead of it.
+The doc comment on `record_session_step` had claimed "CLI standalone passes
+false" since v0.7; the shared command functions made that impossible to
+express. Now it is expressible.
+
+### What it does not decide
+
+Whether a *deliberate* sequence of standalone CLI commands should link into
+one session (say `premortem` then `spec` in a script). It can, if the user
+runs `naysay session start` first. Implicit creation was the bug.
+
+### Verification
+
+Two standalone `check` runs on different ideas: the decision-session count is
+unchanged (4 before, 4 after), so the second run no longer receives the
+first's context. 85/85 tests, clippy and fmt clean.

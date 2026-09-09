@@ -4,7 +4,7 @@ One page. Currently binding rules only, each pointing at the decision that
 established it. The reasoning and the lineage live in
 [DECISIONS.md](DECISIONS.md), which is append-only — nothing there is deleted.
 
-*Last reconciled against D-036. If this file and an entry disagree, the entry
+*Last reconciled against D-037. If this file and an entry disagree, the entry
 wins and this file is wrong.*
 
 ## What naysay is

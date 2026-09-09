@@ -1193,7 +1193,13 @@ async fn seed(
 
     let content = call_llm(&prompt, history, 1200, 0.7).await?;
     note_usage_stderr();
-    store::record_session_step(&store::Op::Seed, topic, &content, None, true);
+    store::record_session_step(
+        &store::Op::Seed,
+        topic,
+        &content,
+        None,
+        session_autocreate(),
+    );
     emit_output(
         "seed",
         save_path,
@@ -1232,7 +1238,13 @@ async fn drill(
 
     let content = call_llm(&prompt, history, 800, 0.6).await?;
     note_usage_stderr();
-    store::record_session_step(&store::Op::Drill, idea, &content, None, true);
+    store::record_session_step(
+        &store::Op::Drill,
+        idea,
+        &content,
+        None,
+        session_autocreate(),
+    );
     emit_output(
         "drill",
         save_path,
@@ -1282,7 +1294,7 @@ async fn premortem(
         idea,
         &content,
         saved_ref.as_deref(),
-        true,
+        session_autocreate(),
     );
     emit_output(
         "premortem",
@@ -1346,7 +1358,7 @@ async fn check(
         idea,
         &content,
         saved_ref.as_deref(),
-        true,
+        session_autocreate(),
     );
     emit_output(
         "check",
@@ -1400,7 +1412,13 @@ async fn spec(
             None
         }
     };
-    store::record_session_step(&store::Op::Spec, idea, &content, saved_ref.as_deref(), true);
+    store::record_session_step(
+        &store::Op::Spec,
+        idea,
+        &content,
+        saved_ref.as_deref(),
+        session_autocreate(),
+    );
     emit_output(
         "spec",
         save_path,
@@ -1469,7 +1487,7 @@ async fn postmortem(
         idea,
         &content,
         saved_ref.as_deref(),
-        true,
+        session_autocreate(),
     );
     emit_output(
         "postmortem",
@@ -1592,6 +1610,8 @@ impl ReplState {
 }
 
 async fn repl(resume: Option<std::path::PathBuf>) -> Result<()> {
+    // The REPL is a session, so its verdict commands may create one (D-032).
+    IN_REPL.store(true, std::sync::atomic::Ordering::Relaxed);
     // Try to open a session log; non-fatal if it fails.
     let mut st = ReplState {
         history: Vec::new(),
@@ -1912,6 +1932,19 @@ fn set_interactive(interactive: bool) {
 
 fn is_interactive() -> bool {
     INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether a verdict command may auto-create a decision session.
+///
+/// Only the REPL does. A one-shot CLI command must not: the first
+/// `naysay check "A"` would create a session rooted at A, and every later
+/// standalone command — on unrelated ideas — would be injected with it
+/// (D-032). An explicitly started session (`naysay session start`) is still
+/// recorded either way; this governs implicit creation only.
+static IN_REPL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn session_autocreate() -> bool {
+    IN_REPL.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Backoff for attempt `n` (0-based): 1s, 2s, 4s…
