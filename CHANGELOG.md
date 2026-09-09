@@ -16,6 +16,43 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.3.0 — 2026-09-09 *(unpublished)*
+
+**Onboarding runs where the need is, not where the program started.**
+`naysay check "…"` on a fresh machine answered `no API key` and stopped,
+while `naysay` with no arguments walked you through the provider picker —
+the picker simply lived inside the TUI's launch path. It now runs before any
+model call, on every surface. Per D-034.
+
+#### Changed
+
+- **`ensure_key()`** — the picker is a property of needing a model, not of
+  launching the TUI. CLI and REPL commands run it before their first
+  request; the TUI still runs it before taking the terminal.
+- **TTY-gated.** Under a pipe, a redirect, or `--json`, the run fails fast
+  with the exact env vars and a pointer to `naysay doctor` instead of
+  prompting — script behaviour is unchanged.
+- **`probe_has_key()` honours a custom `api_key_env`.** It knew only
+  `NAYSAY_API_KEY` / `MINIMAX_API_KEY` and the keyring, so a user with
+  `DEEPSEEK_API_KEY` configured in `naysay.toml` would have been asked to
+  pick a provider they had already configured.
+- **No re-onboarding on a wrong key.** Only a missing key triggers the
+  picker; an auth failure surfaces the provider's own error.
+
+#### Notes
+
+- No new command, no new dependency — TTY detection is
+  `std::io::IsTerminal`.
+- 84/84 tests pass, clippy and fmt clean, release build verified.
+- Verified end to end: a fresh `naysay check webui` with no key shows the
+  picker; the same command with stdin piped fails fast with the actionable
+  message.
+- **Not published.** 0.2.0 is the current crates.io release. D-019's rule is
+  that the next version does not start until the current one has been used,
+  and this onboarding has not been used once yet.
+
+---
+
 > **Version-line note (2026-09-09).** `0.1.0` was the only published release.
 > `0.2.0`–`0.10.0` were internal iterations that never reached crates.io;
 > they are archived as a git bundle plus a source zip. This release publishes
@@ -628,6 +665,36 @@ First naysay release. Built on pair v1.3.
 <a id="中文"></a>
 
 ## 中文
+
+### naysay v0.3.0 — 2026-09-09 *（未发布）*
+
+**引导跑在需要它的地方，而不是程序启动的地方。** 在新机器上
+`naysay check "…"` 只会答一句 `no API key` 然后停住，而 `naysay` 不带参数
+却会带你走完 provider 选择器——因为那段引导住在 TUI 的启动路径里。现在它
+跑在任何一次模型调用之前，三个界面都一样。见 D-034。
+
+#### 变更
+
+- **`ensure_key()`** —— 选择器属于"需要模型"，不属于"启动 TUI"。CLI 和
+  REPL 命令在第一次请求前调用它；TUI 仍在接管终端之前调用。
+- **按 TTY 分流。** 管道、重定向或 `--json` 时快速失败，打印确切的环境变量
+  并指向 `naysay doctor`，不弹交互——脚本行为不变。
+- **`probe_has_key()` 认自定义 `api_key_env` 了。** 它以前只认
+  `NAYSAY_API_KEY` / `MINIMAX_API_KEY` 和 keyring，于是已经配好
+  `DEEPSEEK_API_KEY` 的人反而会被要求再选一次 provider。
+- **key 错时不重新引导。** 只有缺 key 才触发选择器；认证失败直接抛出
+  provider 自己的错误。
+
+#### 备注
+
+- 不加命令、不加依赖——TTY 判断用 `std::io::IsTerminal`。
+- 84/84 测试通过，clippy 与 fmt 干净，release 构建已验证。
+- 端到端验证过：新机器上 `naysay check webui` 会显示选择器；同一条命令
+  在 stdin 被管道化时快速失败并给出可操作的提示。
+- **未发布。** crates.io 上目前是 0.2.0。D-019 的规矩是当前版本被用过之前
+  不开下一版，而这段新引导一次都还没被用过。
+
+---
 
 > **版本线说明（2026-09-09）。** 只有 `0.1.0` 真正发布过。`0.2.0`–`0.10.0`
 > 是内部迭代，从未上 crates.io；它们已作为 git bundle + 源码 zip 归档。

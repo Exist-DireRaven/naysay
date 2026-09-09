@@ -721,6 +721,16 @@ async fn main() -> Result<()> {
     install_panic_hook();
     let cli = Cli::parse();
 
+    // Whether this run may prompt for a provider (D-034): a pipe, a
+    // redirect, or `--json` means no — those get the env-var escape hatch
+    // instead of a prompt.
+    {
+        use std::io::IsTerminal;
+        set_interactive(
+            !cli.json && std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+        );
+    }
+
     // --continue resolves to the newest session file up front, so a missing
     // session can be reported before any UI opens.
     let resume = if cli.continue_last {
@@ -912,6 +922,22 @@ fn probe_has_key() -> bool {
             return true;
         }
     }
+    // A configured provider names its own env var (naysay.toml
+    // `api_key_env`). Without this, a user with DEEPSEEK_API_KEY set would
+    // be asked to pick a provider they already configured. Reading the file
+    // directly keeps the config() OnceLock uninitialised (D-022).
+    if let Ok(dir) = data_dir() {
+        if let Ok(raw) = std::fs::read_to_string(dir.join("naysay.toml")) {
+            if let Ok(cfg) = Config::parse_strict(&raw) {
+                if std::env::var(&cfg.api_key_env)
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false)
+                {
+                    return true;
+                }
+            }
+        }
+    }
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
         if matches!(entry.get_password(), Ok(k) if !k.is_empty()) {
             return true;
@@ -954,15 +980,32 @@ fn setup_box_row(text: &str) -> String {
     format!("  |   {text}{}|", " ".repeat(pad))
 }
 
-async fn launch_interactive(
-    sound: bool,
-    music: bool,
-    resume: Option<std::path::PathBuf>,
-) -> Result<()> {
-    // First-run: if no key is configured anywhere, walk the user through
-    // the provider picker. The probe avoids config() on purpose — see
-    // probe_has_key.
+/// Make sure a model can be called, wherever the need arises (D-034).
+///
+/// This used to live inside `launch_interactive`, so only the TUI entry
+/// point ever reached the picker: `naysay check "…"` on a fresh machine
+/// answered "no API key" and stopped. Onboarding belongs to the need, not
+/// to how the program was started.
+///
+/// `interactive` is false under a pipe, in CI, and whenever `--json` is
+/// set — those get the env-var escape hatch instead of a prompt, so script
+/// behaviour is unchanged. A *wrong* key is never re-onboarded; only a
+/// missing one is, so an auth failure cannot masquerade as "not
+/// configured".
+///
+/// Must run before the first `config()` call: the picker writes
+/// `naysay.toml` and `config()` is a OnceLock (D-022). The probe avoids
+/// config() on purpose — see `probe_has_key`.
+fn ensure_key(interactive: bool) -> Result<()> {
     if !probe_has_key() {
+        if !interactive {
+            anyhow::bail!(
+                "no API key configured.\n  \
+                 → set NAYSAY_API_KEY (or MINIMAX_API_KEY), or the env var named in naysay.toml\n  \
+                 → or run `naysay` once to pick a provider interactively\n  \
+                 → or run `naysay doctor` to see what is missing"
+            );
+        }
         eprintln!();
         eprintln!("  +--------------------------------------------------+");
         eprintln!("  |                                                  |");
@@ -1111,10 +1154,20 @@ async fn launch_interactive(
 
         eprintln!();
         eprintln!("   + provider: {model}  ·  {}", endpoint_host(&chat_url));
-        eprintln!("   launching TUI...");
-        std::thread::sleep(std::time::Duration::from_millis(1200));
     }
+    Ok(())
+}
 
+/// Default entry path for `naysay` with no subcommand: make sure a provider
+/// is configured, then hand the terminal to the TUI. The TUI is always
+/// interactive, and it does its own setup before it takes the terminal —
+/// the request path must never prompt (see `ensure_key`).
+async fn launch_interactive(
+    sound: bool,
+    music: bool,
+    resume: Option<std::path::PathBuf>,
+) -> Result<()> {
+    ensure_key(true)?;
     tui::run(sound, music, resume).await
 }
 
@@ -1926,6 +1979,19 @@ pub(crate) fn set_tui_active(active: bool) {
     TUI_ACTIVE.store(active, Ordering::SeqCst);
 }
 
+/// Whether this process is allowed to prompt for a provider: stdin and
+/// stdout are terminals and `--json` was not requested. Set once in `main`.
+/// A piped or redirected run must never block on a prompt (D-034).
+static INTERACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn set_interactive(interactive: bool) {
+    INTERACTIVE.store(interactive, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn is_interactive() -> bool {
+    INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Backoff for attempt `n` (0-based): 1s, 2s, 4s…
 fn backoff_secs(attempt: u32) -> u64 {
     1 << attempt
@@ -1944,6 +2010,12 @@ const MAX_RETRIES: u32 = 2;
 /// body is never consumed before the retry decision, so a retry is always
 /// safe to issue.
 async fn post_chat_with_retry(req: &ChatRequest) -> Result<reqwest::Response> {
+    // Onboarding runs where the need arises, not only at launch (D-034) —
+    // except inside the TUI, which set itself up before taking the
+    // terminal and must never prompt from a request.
+    if !TUI_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        ensure_key(is_interactive())?;
+    }
     let api_key = load_api_key().context(format!(
         "no API key — set {} or run `naysay key set`",
         config().api_key_env

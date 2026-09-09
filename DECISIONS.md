@@ -923,3 +923,45 @@ does not call the CLI.
 - Whether `naysay-agent` is the final name.
 - Whether the CLI gains any agent-facing surface. It does not need to: the
   skill is self-contained by design.
+
+## D-034 · First-run onboarding moves from the entry point to the need (2026-09-09)
+
+**Decision:** The provider picker stops being a property of "launching the
+TUI" and becomes a property of "needing a model". A new `ensure_key()`
+runs before any model call on every surface and splits on whether it is
+allowed to be interactive:
+
+- **interactive** (stdin and stdout are TTYs and `--json` is absent) — run
+  the existing picker, write `naysay.toml` plus the keyring entry, then
+  continue the command that asked for the key.
+- **non-interactive** (piped, CI, `--json`) — fail fast with the exact env
+  var names and a pointer to `naysay doctor`. Script behaviour unchanged.
+
+### Why
+
+`naysay check "…"` on a fresh machine answered `no API key — set
+DEEPSEEK_API_KEY or run naysay key set`, while `naysay` with no arguments
+walked the user through a provider picker. The difference was not design
+quality: the picker lived inside `launch_interactive`, so only one of three
+entry points ever reached it. Onboarding was attached to the entry point
+instead of to the need — the same shape of bug as D-031, where the TUI
+could not remember decisions because the store write lived on the other
+path.
+
+### What it does not do
+
+- No new command. `naysay setup` would grow the surface (D-019); the
+  problem was placement, not a missing verb.
+- No new dependency: TTY detection is `std::io::IsTerminal` (std 1.70).
+- It does not re-onboard on a *wrong* key. Only a missing key triggers the
+  picker; an authentication failure surfaces the provider's own error, so a
+  bad key can never masquerade as "not configured yet".
+
+### Trade-offs
+
+- A one-shot CLI command can now prompt. That is the point, but it must
+  never happen under a pipe — the TTY gate is the contract, and `--json`
+  forces the non-interactive path even on a terminal.
+- The picker still presents Ollama as one row among seven cloud providers.
+  Making "local, free, no key" the first fork is a separate UX decision,
+  not this entry.
