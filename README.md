@@ -215,19 +215,20 @@ dependencies, no installer.
 
 naysay is developed by a human working with AI coding agents, under
 rules that keep ownership human: every design decision is logged in
-[DECISIONS.md](DECISIONS.md) (31 entries and counting), the codebase
+[DECISIONS.md](DECISIONS.md) (32 entries and counting), the codebase
 is mapped in [CODEMAP.md](CODEMAP.md), and the agents that help
 maintain it are bound by [AGENTS.md](AGENTS.md). The premortem in
 this README killed this project's own predecessor — the lineage is
 part of the product. Start with [CONTRIBUTING.md](CONTRIBUTING.md) if
-you want in.
+you want in. The agent-facing half — the skill that constrains a coding agent
+mid-task — lives in a separate repo, `naysay-agent` (D-033).
 
 ### naysay's own decision record
 
 The tool runs on itself. Current state, queryable in this repo:
 
 ```
-logged decisions   : 31 (DECISIONS.md D-001 … D-032; D-027 unused)
+logged decisions   : 32 (DECISIONS.md D-001 … D-033; D-027 unused)
 kill cases         : 2 published (examples/) — incl. this tool's predecessor
 survivor           : the tool you are reading
 assumption registry: live (UNKNOWN → VALID/INVALIDATED lifecycle)
@@ -398,14 +399,15 @@ Claude Code 能 brainstorm,但执行者问"这事该做吗"等于承包商建议
 
 ### 这项目怎么做的
 
-naysay 由一个人类与 AI 协作开发,规则保证所有权留在人这一边:每条设计决定都入 [DECISIONS.md](DECISIONS.md)(17 条,还在长),代码地图在 [CODEMAP.md](CODEMAP.md),协作的 agent 受 [AGENTS.md](AGENTS.md) 约束。本 README 开头的 premortem 杀掉了项目自己的前身——血统本身就是产品的一部分。想参与从 [CONTRIBUTING.md](CONTRIBUTING.md) 开始。
+naysay 由一个人类与 AI 协作开发,规则保证所有权留在人这一边:每条设计决定都入 [DECISIONS.md](DECISIONS.md)(17 条,还在长),代码地图在 [CODEMAP.md](CODEMAP.md),协作的 agent 受 [AGENTS.md](AGENTS.md) 约束。本 README 开头的 premortem 杀掉了项目自己的前身——血统本身就是产品的一部分。想参与从 [CONTRIBUTING.md](CONTRIBUTING.md) 开始。面向 agent 的那一半——约束
+coding agent 在任务中途的那条 skill——在独立仓库 `naysay-agent`（D-033）。
 
 ### naysay 自己的决策记录
 
 这个工具跑在自己身上。当前状态，本仓库内可查：
 
 ```
-已入档决策   : 31 条（DECISIONS.md D-001 … D-032；D-027 未使用）
+已入档决策   : 32 条（DECISIONS.md D-001 … D-033；D-027 未使用）
 杀掉的项目   : 2 个已发布案例（examples/）—— 包括本工具的前身
 幸存者       : 你正在读的这个工具
 calibration  : naysay calibration（等真实决策闭环积累）

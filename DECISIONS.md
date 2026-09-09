@@ -894,3 +894,32 @@ session scoped?), not a typo fix.
 the wrong question again, or before any release that advertises CLI
 scripting. The fix is not "stop recording" — it is deciding what a
 standalone session means.
+
+## D-033 · The split: human naysay and agent naysay are two repositories (2026-09-09)
+
+**Decision:** `naysay` stays the human-facing CLI. Everything the agent loads
+inside its own loop — the pre-existence skill now, hooks and a plugin later —
+lives in a separate repository, `naysay-agent`. The two share the judgment
+method, not the code: the skill is deterministic and needs no API key, so it
+does not call the CLI.
+
+### Why
+
+1. **The audiences fail differently.** The CLI fails when a human forgets to
+   run it before starting; the skill fails when the agent skips it mid-task.
+   Packaging them together forced one install story onto two problems —
+   `cargo install naysay` never made sense for the agent half.
+2. **Different release rhythms.** The CLI follows Rust versioning and the
+   D-019 discipline. The agent half is markdown plus, later, hooks; editing a
+   skill should not require a crates.io release.
+3. **Different blast radius.** Installing a CLI is one binary. Installing a
+   skill changes what every future session reads. Those deserve separate
+   decisions to install.
+
+### What this does not decide
+
+- Whether the skill ships a hook — deferred until the skill is observed being
+  skipped (the D-032 family of questions).
+- Whether `naysay-agent` is the final name.
+- Whether the CLI gains any agent-facing surface. It does not need to: the
+  skill is self-contained by design.
