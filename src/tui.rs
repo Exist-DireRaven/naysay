@@ -45,7 +45,7 @@ use crate::{call_llm_stream, config, endpoint_host, load_api_key, open_session_l
 
 /// Append one line to the session debug log. Best-effort — never panics,
 /// never blocks. Used to diagnose "TUI flashed and exited" issues.
-fn debug_log(msg: &str) {
+pub(crate) fn debug_log(msg: &str) {
     if let Ok(dir) = crate::data_dir() {
         let path = dir.join("session.log");
         let ts = std::time::SystemTime::now()
@@ -76,7 +76,7 @@ fn debug_log(msg: &str) {
 /// * `:` and `·` are part of the brand voice — keep them.
 /// * Status / banner / help lines are English by design; the rest of the
 ///   surface is fully bilingual (README, prompts.toml, error hints).
-mod ui_text {
+pub(crate) mod ui_text {
     pub const BANNER_HEADER: &str = "naysay v{version}  ·  model: {model}  ·  provider: {host}";
     pub const BANNER_INTRO: &str =
         "type a command, or anything for freeform. verdict family first:";
@@ -110,6 +110,24 @@ mod ui_text {
 
     pub const EXPORT_FAILED: &str = "export failed: {err}";
 
+    // Workspace (D-035) pane chrome. One constant per user-visible string,
+    // same rule as the rest of this module.
+    pub const WS_TITLE_TRANSCRIPT: &str = " transcript ";
+    pub const WS_TITLE_SCROLLED: &str = " transcript · ↑{n} ";
+    pub const WS_TITLE_EXPLORATION: &str = " exploration ";
+    pub const WS_TITLE_DECISION: &str = " decision ";
+    pub const WS_NO_SESSION: &str = "no active session — `naysay session start <idea>`";
+    pub const WS_FILTER: &str = "filter: ";
+    pub const WS_STORE: &str = "store";
+    pub const WS_NO_MATCH: &str = "no stored decision matches";
+    pub const WS_NO_DECISION: &str = "no decision saved yet";
+    pub const WS_VERDICT: &str = "verdict: ";
+    pub const WS_CONFIDENCE: &str = "confidence: ";
+    pub const WS_ASSUMPTIONS: &str = "assumptions";
+    pub const WS_LINKED: &str = "linked";
+    pub const WS_NONE: &str = "(none)";
+    pub const WS_NONE_EXTRACTED: &str = "(none extracted)";
+
     // Markdown export header (kept here so the transcript stays consistent).
     pub const EXPORT_TITLE: &str = "# naysay conversation\n";
     pub const EXPORT_TS_TAG: &str = "_exported at epoch {ts}_\n";
@@ -124,6 +142,11 @@ mod ui_text {
 /// this flag and exits gracefully when set, instead of letting the default
 /// Windows handler SIGKILL the process and lose the terminal cleanup.
 static CTRL_C_PRESSED: AtomicBool = AtomicBool::new(false);
+
+/// Polled by both render loops (the inline loop reads the static directly).
+pub(crate) fn ctrl_c_pressed() -> bool {
+    CTRL_C_PRESSED.load(Ordering::SeqCst)
+}
 
 #[cfg(target_os = "windows")]
 mod win_console {
@@ -168,10 +191,13 @@ mod win_console {
 /// * `music_enabled` — play a looping 8-bit bassline in the background
 /// * `resume` — session file to replay into the conversation (`--continue`).
 ///   New turns append to the same file, so a session stays in one piece.
+/// * `inline` — render the pre-workspace transcript instead of the
+///   three-pane workspace (D-035 M5).
 pub async fn run(
     sound_enabled: bool,
     music_enabled: bool,
     resume: Option<std::path::PathBuf>,
+    inline: bool,
 ) -> Result<()> {
     debug_log(&format!(
         "tui::run entered (sound={sound_enabled}, music={music_enabled})"
@@ -274,6 +300,15 @@ pub async fn run(
     }
 
     let mut input = String::new();
+
+    // D-035: the three-pane workspace is the default surface. `--inline`
+    // keeps the transcript in scrollback until M5 decides which one wins.
+    if !inline {
+        let result = crate::workspace::run(&mut state, &rx, &tx, &prompts, sound_enabled).await;
+        crate::set_tui_active(false);
+        debug_log("terminal restored");
+        return result;
+    }
 
     // Inline viewport: the terminal's own scrollback is the history pane.
     // Raw mode is still needed for key capture, but the screen is never
@@ -468,7 +503,7 @@ pub async fn run(
 
 /// State for the Tab-cycling completion. Reset on any non-Tab key.
 #[derive(Default)]
-struct CompletionState {
+pub(crate) struct CompletionState {
     /// Word we are completing (the first token of `input`).
     prefix: String,
     /// Candidates that matched the prefix at first Tab.
@@ -605,56 +640,58 @@ fn apply_completion(input: &mut String, state: &mut TuiState) {
 }
 
 #[derive(Default)]
-struct TuiState {
-    history: Vec<HistoryEntry>,
-    busy: bool,
-    status: String,
+pub(crate) struct TuiState {
+    pub(crate) history: Vec<HistoryEntry>,
+    pub(crate) busy: bool,
+    pub(crate) status: String,
     /// Frame counter for spinner animation. Wraps; modulo handles overflow.
-    tick: u64,
+    pub(crate) tick: u64,
     /// When the session started. Reserved for future uptime display in the
     /// header; currently unused since we removed the `uptime_secs` readout.
     #[allow(dead_code)]
-    session_start: Option<Instant>,
+    pub(crate) session_start: Option<Instant>,
     /// Number of times the user submitted a command (seed/drill/explain).
-    calls: u32,
+    pub(crate) calls: u32,
     /// Last command submitted by the user. Pressing `r` re-dispatches this.
     /// Cleared on app exit; cleared when input box is edited (so `r` won't
     /// regenerate an unrelated earlier prompt after freeform).
-    last_command: Option<String>,
+    pub(crate) last_command: Option<String>,
     /// Tab completion scratchpad. Reset on any non-Tab keypress.
-    completion: CompletionState,
+    pub(crate) completion: CompletionState,
     /// Index into `history` of the Ai entry currently being filled by a
     /// streaming response. `None` between calls. The render loop reads this
     /// to decide whether to show the spinner next to the entry.
-    streaming: Option<usize>,
+    pub(crate) streaming: Option<usize>,
     /// Number of prior user/assistant pairs to include as context for each
     /// call. Configurable via `/context N` (default 3). Range 0..=10.
-    context_turns: usize,
+    pub(crate) context_turns: usize,
     /// Model name used for subsequent calls. Configurable via `/model <name>`
     /// (defaults to `Config::default().model`). Shown in the title bar so
     /// the user always knows what's being asked.
-    model: String,
+    pub(crate) model: String,
     /// Previously submitted inputs, oldest first. Ctrl+↑ / Ctrl+↓ walk this
     /// list; capped so a long session can't grow it without bound.
-    input_history: Vec<String>,
+    pub(crate) input_history: Vec<String>,
     /// Cursor position in the input, as a CHAR index (not bytes) — CJK
     /// chars are one cursor step each. Full line editing: Left/Right/
     /// Home/End/Delete + insertion at the cursor.
-    cursor: usize,
+    pub(crate) cursor: usize,
     /// The terminal row of the live input line. Starts at the row where
     /// the TUI was launched; after the first transcript flush it pins to
     /// the bottom (h - 2). All live-row printing targets this row.
-    viewport_top: u16,
+    /// Inline mode only — the workspace draws its own input row.
+    pub(crate) viewport_top: u16,
     /// Position in `input_history` while recalling. `None` = not recalling;
     /// typing any character cancels the recall.
-    recall_idx: Option<usize>,
+    pub(crate) recall_idx: Option<usize>,
     /// Session JSONL this TUI instance logs to (user + assistant turns).
     /// `None` when the sessions dir is unwritable — logging is best-effort.
-    session_path: Option<std::path::PathBuf>,
+    pub(crate) session_path: Option<std::path::PathBuf>,
     /// How many history entries have been printed to the terminal's
     /// scrollback. Everything from this index on is either not yet final
     /// (the in-flight streaming entry) or waiting for the next flush.
-    flushed: usize,
+    /// Inline mode only.
+    pub(crate) flushed: usize,
 }
 
 impl TuiState {
@@ -682,14 +719,14 @@ impl TuiState {
 }
 
 #[derive(Clone)]
-enum HistoryEntry {
+pub(crate) enum HistoryEntry {
     User(String),
     Ai(String),
     Error(String),
     Info(String),
 }
 
-enum TuiEvent {
+pub(crate) enum TuiEvent {
     /// A single streamed chunk from the LLM. Append to the in-flight entry.
     Delta(String),
     /// Stream finished (Ok = full content + elapsed + server-reported token
@@ -697,7 +734,7 @@ enum TuiEvent {
     Result(Result<(String, Duration, Option<crate::Usage>), String>),
 }
 
-enum KeyAction {
+pub(crate) enum KeyAction {
     None,
     Quit,
     Submit(String),
@@ -715,14 +752,14 @@ const SPINNER_FRAMES: &[&str] = &["|", "/", "-", "\\", "|", "/", "-", "\\"];
 /// we only reach for the single accent color when we have something that
 /// genuinely needs attention: the verdict in a premortem, the cause of
 /// death in an autopsy, the user's own mistakes.
-const ACCENT_RED: Color = Color::Red;
-const MUTED: Color = Color::DarkGray;
+pub(crate) const ACCENT_RED: Color = Color::Red;
+pub(crate) const MUTED: Color = Color::DarkGray;
 
 // ─── Input handling ─────────────────────────────────────────────────────────────────────
 
 /// The dim status line under the input: liveness while busy, command
 /// cheat-sheet when idle. Pure so it is testable without a terminal.
-fn status_text(state: &TuiState, input: &str) -> String {
+pub(crate) fn status_text(state: &TuiState, input: &str) -> String {
     let spinner = SPINNER_FRAMES[(state.tick / 4) as usize % SPINNER_FRAMES.len()];
     let base = if state.status.is_empty() {
         "ready"
@@ -750,7 +787,49 @@ fn status_text(state: &TuiState, input: &str) -> String {
     format!("{base}{tail}")
 }
 
-fn handle_key(key: KeyEvent, input: &mut String, state: &mut TuiState) -> KeyAction {
+/// Insert / delete / move at the cursor. Returns true when the key was an
+/// editing key; the caller then resets whatever recall / completion state
+/// the edit invalidated. Shared by the main input and the workspace's
+/// store-filter field.
+pub(crate) fn edit_text(key: &KeyEvent, text: &mut String, cursor: &mut usize) -> bool {
+    match key.code {
+        KeyCode::Char(c) => {
+            let b = byte_index_of_char(text, *cursor);
+            text.insert(b, c);
+            *cursor += 1;
+        }
+        KeyCode::Backspace => {
+            if *cursor > 0 {
+                *cursor -= 1;
+                let b = byte_index_of_char(text, *cursor);
+                text.remove(b);
+            }
+        }
+        KeyCode::Delete => {
+            let len = text.chars().count();
+            if *cursor < len {
+                let b = byte_index_of_char(text, *cursor);
+                text.remove(b);
+            }
+        }
+        KeyCode::Left => {
+            *cursor = cursor.saturating_sub(1);
+        }
+        KeyCode::Right => {
+            *cursor = (*cursor + 1).min(text.chars().count());
+        }
+        KeyCode::Home => {
+            *cursor = 0;
+        }
+        KeyCode::End => {
+            *cursor = text.chars().count();
+        }
+        _ => return false,
+    }
+    true
+}
+
+pub(crate) fn handle_key(key: KeyEvent, input: &mut String, state: &mut TuiState) -> KeyAction {
     // Ctrl+C / Ctrl+Q always quits, even when busy.
     if key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('q'))
@@ -787,43 +866,29 @@ fn handle_key(key: KeyEvent, input: &mut String, state: &mut TuiState) -> KeyAct
         return KeyAction::None;
     }
 
-    match key.code {
-        KeyCode::Char(c) => {
-            let b = byte_index_of_char(input, state.cursor);
-            input.insert(b, c);
-            state.cursor += 1;
-            state.recall_idx = None;
-            state.completion = CompletionState::default();
-        }
-        KeyCode::Backspace => {
-            if state.cursor > 0 {
-                state.cursor -= 1;
-                let b = byte_index_of_char(input, state.cursor);
-                input.remove(b);
+    // The guards mirror what the edit actually did: a Backspace at column 0
+    // and a Delete at the end are no-ops and must not cancel a recall.
+    let cursor_before = state.cursor;
+    let len_before = input.chars().count();
+    if edit_text(&key, input, &mut state.cursor) {
+        match key.code {
+            KeyCode::Char(_) => {
                 state.recall_idx = None;
                 state.completion = CompletionState::default();
             }
-        }
-        KeyCode::Delete => {
-            let len = input.chars().count();
-            if state.cursor < len {
-                let b = byte_index_of_char(input, state.cursor);
-                input.remove(b);
+            KeyCode::Backspace if cursor_before > 0 => {
+                state.recall_idx = None;
                 state.completion = CompletionState::default();
             }
+            KeyCode::Delete if cursor_before < len_before => {
+                state.completion = CompletionState::default();
+            }
+            _ => {}
         }
-        KeyCode::Left => {
-            state.cursor = state.cursor.saturating_sub(1);
-        }
-        KeyCode::Right => {
-            state.cursor = (state.cursor + 1).min(input.chars().count());
-        }
-        KeyCode::Home => {
-            state.cursor = 0;
-        }
-        KeyCode::End => {
-            state.cursor = input.chars().count();
-        }
+        return KeyAction::None;
+    }
+
+    match key.code {
         KeyCode::Enter => {
             let line = std::mem::take(input);
             state.cursor = 0;
@@ -876,7 +941,7 @@ fn handle_key(key: KeyEvent, input: &mut String, state: &mut TuiState) -> KeyAct
 
 // ─── Submission + async dispatch ───────────────────────────────────────────────────────
 
-fn submit_line(
+pub(crate) fn submit_line(
     line: String,
     state: &mut TuiState,
     tx: &mpsc::Sender<TuiEvent>,
@@ -1773,7 +1838,7 @@ fn enrich_error(raw: &str) -> String {
 /// Write the current conversation to a markdown file. Skips boot sequence
 /// (Info lines), keeps user prompts and AI responses interleaved as a clean
 /// transcript. Errors get folded into the prose as `> error:` blockquotes.
-fn export_conversation(history: &[HistoryEntry]) -> std::io::Result<std::path::PathBuf> {
+pub(crate) fn export_conversation(history: &[HistoryEntry]) -> std::io::Result<std::path::PathBuf> {
     use std::io::Write;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2095,7 +2160,7 @@ fn build_context(history: &[HistoryEntry], turns: usize) -> Vec<crate::Message> 
     msgs
 }
 
-fn apply_event(state: &mut TuiState, evt: TuiEvent, sound_enabled: bool) {
+pub(crate) fn apply_event(state: &mut TuiState, evt: TuiEvent, sound_enabled: bool) {
     match evt {
         TuiEvent::Delta(chunk) => {
             // First chunk: create the in-flight Ai entry. Subsequent chunks:
@@ -2134,11 +2199,11 @@ fn apply_event(state: &mut TuiState, evt: TuiEvent, sound_enabled: bool) {
         }
         TuiEvent::Result(Err(e)) => {
             state.busy = false;
-            state.streaming = None;
+            let streaming = state.streaming.take();
             state.status = "ready (error)".into();
             // If we already started streaming, replace that partial entry
             // with the error so the user sees the failure in context.
-            match state.streaming {
+            match streaming {
                 Some(idx) if matches!(state.history.get(idx), Some(HistoryEntry::Ai(_))) => {
                     if let Some(HistoryEntry::Ai(buf)) = state.history.get_mut(idx) {
                         let prior = std::mem::take(buf);
@@ -2280,7 +2345,7 @@ fn is_verdict_line(line: &str) -> bool {
         || t.starts_with("决定")
 }
 
-fn entry_to_lines(entry: &HistoryEntry) -> Vec<Line<'_>> {
+pub(crate) fn entry_to_lines(entry: &HistoryEntry) -> Vec<Line<'_>> {
     match entry {
         // A submitted command, transcript-style: `> premortem x`.
         HistoryEntry::User(s) => vec![Line::from(vec![

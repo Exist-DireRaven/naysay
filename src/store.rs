@@ -47,7 +47,7 @@ pub(crate) struct DecisionRecord {
 /// The store lives in the current working directory: `.naysay/decisions/`.
 /// Cwd-local by design (D-021): the user chooses which directory is a
 /// project, and therefore which decisions belong together.
-fn decisions_dir() -> std::io::Result<PathBuf> {
+pub(crate) fn decisions_dir() -> std::io::Result<PathBuf> {
     let dir = std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(".naysay")
@@ -244,11 +244,17 @@ pub(crate) fn save_decision(
 pub(crate) fn save_verdict(op: &Op, kind: &str, idea: &str, body: &str) -> Option<String> {
     let id = match save_decision(kind, idea, body, None) {
         Ok(id) => {
-            eprintln!("decision-store: saved {kind} {id} under .naysay/decisions/");
+            // stderr would land in the middle of the fullscreen workspace;
+            // the TUI reports saves through the decision pane instead.
+            if !crate::tui_active() {
+                eprintln!("decision-store: saved {kind} {id} under .naysay/decisions/");
+            }
             Some(id)
         }
         Err(e) => {
-            eprintln!("decision-store: save failed: {e}");
+            if !crate::tui_active() {
+                eprintln!("decision-store: save failed: {e}");
+            }
             None
         }
     };
@@ -642,7 +648,7 @@ fn assumptions_path(dir: &std::path::Path) -> std::path::PathBuf {
     dir.parent().unwrap_or(dir).join("assumptions.json")
 }
 
-fn load_registry(dir: &std::path::Path) -> Vec<Assumption> {
+pub(crate) fn load_registry(dir: &std::path::Path) -> Vec<Assumption> {
     let path = assumptions_path(dir);
     std::fs::read_to_string(&path)
         .ok()

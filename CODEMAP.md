@@ -12,7 +12,8 @@ This file is part of the codebase. If you change the rules, change this file.
 Companion to `DECISIONS.md` (which answers "why?"). This answers
 "what?".
 
-Codebase at v0.10.0: ~8000 lines across `src/main.rs` + `src/tui.rs` + `src/store.rs` + `src/text.rs`.
+Codebase at v0.10.0: ~8900 lines across `src/main.rs` + `src/tui.rs` +
+`src/store.rs` + `src/text.rs` + `src/workspace.rs`.
 If you can read all three files end-to-end with this map in hand, you own the
 tool. If you can't, that's the part to study next.
 
@@ -166,14 +167,15 @@ tool. If you can't, that's the part to study next.
 
 ---
 
-## `src/tui.rs` (≈ 2560 lines)
+## `src/tui.rs` (≈ 2615 lines)
 
 ### Entry + lifecycle
 
 | symbol | what it does |
 |--------|--------------|
-| `run` | UI entry. Loads config, sanity-checks API key, sets up Windows console ctrl handler (Ctrl+C graceful exit), pushes boot-sequence history, replays a resumed session when given one (`--continue`: turns into history, user turns into input recall, session log reused), enables raw mode with an **inline viewport** (no alternate screen), runs the main loop — flush finished entries to scrollback, render the two-row live strip, restore terminal on exit (transcript stays in scrollback). |
+| `run` | UI entry. Loads config, sanity-checks API key, sets up Windows console ctrl handler (Ctrl+C graceful exit), pushes boot-sequence history, replays a resumed session when given one (`--continue`: turns into history, user turns into input recall, session log reused). Dispatches to `workspace::run` (default); with `--inline` it falls through to the pre-workspace path: raw mode, inline viewport (no alternate screen), flush finished entries to scrollback, render the two-row live strip, restore terminal on exit. |
 | `debug_log` | Append-only debug log to `<data_dir>/session.log` (best-effort, never panics). Tagged at every phase boundary so a "TUI flashed and exited" is diagnosable. |
+| `ctrl_c_pressed` | Reads the Windows console handler's flag; polled by both loops. |
 | `win_console::install` | Sets a Windows console control handler so Ctrl+C → graceful exit instead of SIGKILL. No-op on non-Windows. |
 | `CTRL_C_PRESSED` | Atomic flag. Polled by the render loop. |
 
@@ -192,6 +194,7 @@ tool. If you can't, that's the part to study next.
 | symbol | what it does |
 |--------|--------------|
 | `handle_key` | All key handling. Cursor-addressable editing: chars insert at `state.cursor`, Backspace/Delete/←/→/Home/End, Enter submits. While busy: only quit keys. |
+| `edit_text` | Insert / delete / move at the cursor, shared by the main input and the workspace's store-filter field. |
 | `apply_completion` | Tab completion on first word. First Tab: longest-common-prefix extension. Repeated Tab: cycle through candidates. |
 | `longest_common_prefix` | Helper. |
 | `submit_line` | Dispatch a command. Routes to `help` / `/context` / `/clear` / `/model` / `/resume [file]` / the curated command map, else freeform. `@path` inlining before send. Every submission lands in `input_history` and the session log; an LLM response is logged on `Result(Ok)`. Spawns an async task that does the LLM call and pushes `Delta` events into `tx`. |
@@ -247,6 +250,30 @@ tool. If you can't, that's the part to study next.
 
 ---
 
+## `src/workspace.rs` (≈ 720 lines)
+
+The fullscreen three-pane workspace (D-035): exploration and the store left,
+transcript centre, current decision's verdict and assumptions right. Owns its
+own alternate-screen lifecycle; all conversation state and command dispatch
+live in `tui.rs`.
+
+| symbol | what it does |
+|--------|--------------|
+| `run` | Enter alternate screen + raw mode, install a panic hook that restores the terminal, run the event loop, restore on exit. |
+| `event_loop` | Drain `TuiEvent`s (a finished call also reloads the store snapshots), draw, poll keys, tick the spinner. |
+| `handle_workspace_key` | On top of `tui::handle_key`: transcript scrolling (↑↓ / PgUp / PgDn), Ctrl+F to focus the store filter, and the filter's own editing keys. |
+| `draw` | Three-column layout; the centre column is transcript / input row / status row. |
+| `draw_transcript` | In-memory transcript: `entry_to_lines` + `wrap_entry_lines` per frame, scrolled from the tail; cursor placed by display width so CJK lands right. |
+| `draw_exploration` | Store filter, active session steps (newest 8), and the filtered store list (newest 20) with the shown record marked. |
+| `draw_decision` | The shown record: kind/id/age, idea, verdict (red for DON'T BUILD), confidence, assumptions with registry lifecycle marks, linked parent/child records. |
+| `View` | Workspace-local view state: scroll offset, filter text + cursor + focus, and the session / record / registry snapshots. `reload` re-reads all three; `current_record` picks the session's last saved decision; `filtered` applies the term filter. |
+| `clip` / `record_matches` / `status_mark` / `age_days` / `prefix_width` | Pure helpers (unit-tested): width-aware truncation, filter matching, assumption lifecycle marks, age in days, filter-cursor column. |
+
+Tests (3): `clip_*`, `store_filter_*`, and a `TestBackend` render test that
+asserts all three panes draw.
+
+---
+
 ## `src/text.rs` (≈ 290 lines)
 
 Pure text layout, extracted from `tui.rs` (D-023's 3000-line guardrail; D-035 M2).
@@ -276,7 +303,7 @@ If you've never seen the code:
    function in the codebase).
 4. `tui.rs` → `run` + `submit_line` (the architecture).
 5. `tui.rs` → `run_premortem` and `run_spec` (the brand-bearing commands).
-6. `tui.rs` → `render` (what the user actually sees).
+6. `workspace.rs` → `draw` + `draw_decision` (what the user actually sees).
 
 If you want to change something:
 

@@ -24,6 +24,19 @@ while `naysay` with no arguments walked you through the provider picker —
 the picker simply lived inside the TUI's launch path. It now runs before any
 model call, on every surface. Per D-034.
 
+#### Added
+
+- **The TUI is a workspace, not a chat log (D-035 M2).** Three panes:
+  the active session and the decision store on the left, the streaming
+  transcript in the centre, the current decision's verdict, confidence,
+  assumptions and linked records on the right. The transcript is in-memory
+  (no more scrollback), scrolls with ↑↓ / PgUp / PgDn, and the right pane
+  reloads after every write. `Ctrl+F` focuses the left pane's store filter;
+  every whitespace-separated term must match a row.
+- **`src/text.rs` + `src/workspace.rs`.** Pure text layout and the
+  three-pane view moved out of `tui.rs`; it is back to 2615 lines, under
+  the D-023 guardrail with room for the rest of the workspace milestones.
+
 #### Changed
 
 - **`ensure_key()`** — the picker is a property of needing a model, not of
@@ -50,6 +63,14 @@ model call, on every surface. Per D-034.
   against idea-plus-body, so a one-line Chinese query capped at 0.07 and
   returned nothing. It now uses the overlap coefficient and CJK character
   bigrams: the same query returns its record at 0.55.
+- **stderr is silent while the TUI owns the terminal.** `decision-store:`
+  notes were unconditional and would have printed into the middle of the
+  fullscreen workspace; they are now gated by `TUI_ACTIVE` like the retry
+  notes.
+- **A stream that fails mid-answer no longer leaves a duplicate entry.**
+  `apply_event` cleared `streaming` before matching on it, so the
+  "replace the partial entry" arm was unreachable and the error landed as a
+  second entry beside the partial text.
 
 #### Notes
 
@@ -59,6 +80,11 @@ model call, on every surface. Per D-034.
 - Verified end to end: a fresh `naysay check webui` with no key shows the
   picker; the same command with stdin piped fails fast with the actionable
   message.
+- **Workspace milestone:** 91/91 tests pass (three new: width-aware
+  truncation, store filtering, and a `TestBackend` render of all three
+  panes), `cargo clippy -- -D warnings` and `cargo fmt --check` clean,
+  release build verified, and the three panes confirmed in a real terminal
+  window.
 - **Not published.** 0.2.0 is the current crates.io release. D-019's rule is
   that the next version does not start until the current one has been used,
   and this onboarding has not been used once yet.

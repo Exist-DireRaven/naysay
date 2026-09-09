@@ -17,6 +17,7 @@ mod prompts;
 mod store;
 mod text;
 mod tui;
+mod workspace;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -59,6 +60,11 @@ struct Cli {
     /// Launch the full-screen TUI REPL instead of the plain one
     #[arg(long, global = true)]
     tui: bool,
+
+    /// Render the pre-workspace inline transcript instead of the three-pane
+    /// workspace (D-035 M5 rollback path)
+    #[arg(long, global = true)]
+    inline: bool,
 
     /// Play 8-bit sound effects on TUI events (TUI mode only, off by default)
     #[arg(long, global = true)]
@@ -749,12 +755,12 @@ async fn main() -> Result<()> {
 
     // --tui overrides default behavior (no subcommand → TUI instead of REPL)
     if cli.tui {
-        return tui::run(cli.sound, cli.music, resume).await;
+        return tui::run(cli.sound, cli.music, resume, cli.inline).await;
     }
 
     match cli.command {
         // No subcommand → interactive TUI launch (handles key setup itself)
-        None => launch_interactive(cli.sound, cli.music, resume).await,
+        None => launch_interactive(cli.sound, cli.music, resume, cli.inline).await,
         Some(Command::Repl) => repl(resume).await,
         Some(Command::Seed { topic }) => {
             seed(&topic, &[], cli.save.as_deref(), cli.json).await?;
@@ -1168,9 +1174,10 @@ async fn launch_interactive(
     sound: bool,
     music: bool,
     resume: Option<std::path::PathBuf>,
+    inline: bool,
 ) -> Result<()> {
     ensure_key(true)?;
-    tui::run(sound, music, resume).await
+    tui::run(sound, music, resume, inline).await
 }
 
 // ─── v0.1 seed ───────────────────────────────────────────────────────────────────────────
@@ -1920,6 +1927,12 @@ static TUI_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 pub(crate) fn set_tui_active(active: bool) {
     use std::sync::atomic::Ordering;
     TUI_ACTIVE.store(active, Ordering::SeqCst);
+}
+
+/// Read by non-UI code that would otherwise print to stderr under the TUI.
+pub(crate) fn tui_active() -> bool {
+    use std::sync::atomic::Ordering;
+    TUI_ACTIVE.load(Ordering::SeqCst)
 }
 
 /// Whether this process is allowed to prompt for a provider: stdin and
