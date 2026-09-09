@@ -138,7 +138,7 @@ picks up yesterday's session where it left off.
 ### Commands
 
 ```
-naysay                        interactive transcript (default)
+naysay                        three-pane workspace (default)
 naysay --continue             resume your most recent session
 naysay repl                   plain REPL (scriptable, pipeable)
 naysay premortem <idea>       assume it died in 6 months — read the autopsy
@@ -155,7 +155,7 @@ naysay doctor                 diagnose setup problems (config / key / network)
 
 Global flags: `--save <PATH>` (write to file), `--json` (machine output),
 `--sound` (8-bit chimes in the interactive UI), `--tui` (explicit
-interactive mode).
+interactive mode), `--inline` (the pre-workspace transcript, see below).
 
 ```bash
 naysay spec "scrape zhihu trending" --save spec.md
@@ -164,14 +164,26 @@ naysay explain ./src/scraper.rs --json | jq .explanation
 
 ### The interactive UI
 
-No chrome, no full-screen takeover: the conversation is a transcript
-that scrolls in your terminal's own scrollback, Claude-Code style. The
-only live region is two rows at the bottom — `>` input plus one dim
-status line — and when you quit, the transcript stays readable right
-where a terminal transcript should stay. `Ctrl+↑/↓` recalls previous
-inputs, `Tab` completes commands, `@path` inlines a file and `@dir`
-inlines a whole source tree (budgeted), `/resume [file]` replays a past
-session, and the status line shows a live token meter for every call.
+The default surface is a three-pane workspace: exploration and the decision
+store on the left, the transcript in the centre, the current decision's
+verdict, confidence, assumptions and linked records on the right. The verdict
+does not scroll away and the assumption registry is on screen while you work
+— that is why the workspace exists (D-035).
+
+- `Ctrl+F` focuses the left pane's store filter; every whitespace-separated
+  term has to match a row.
+- `↑`/`↓` and `PgUp`/`PgDn` scroll the transcript; with an empty input,
+  `Home` jumps to the oldest row and `End` back to the tail. Submitting
+  returns to the tail automatically.
+- `Ctrl+↑/↓` recalls previous inputs, `Tab` completes commands, `@path`
+  inlines a file and `@dir` inlines a whole source tree (budgeted),
+  `/resume [file]` replays a past session, and the status line shows a live
+  token meter for every call.
+- `Ctrl+S` exports the conversation to markdown; `Esc` / `Ctrl+C` quits.
+
+The pre-workspace transcript — no chrome, history in your terminal's own
+scrollback, two live rows at the bottom — is still there behind `--inline`,
+until the workspace has been used for a week (D-035 M5).
 
 ### Providers: any OpenAI-compatible endpoint
 
@@ -228,7 +240,7 @@ mid-task — lives in a separate repo, `naysay-agent` (D-033).
 The tool runs on itself. Current state, queryable in this repo:
 
 ```
-logged decisions   : 35 (DECISIONS.md D-001 … D-036; D-027 unused)
+logged decisions   : 38 (DECISIONS.md D-001 … D-039; D-027 unused)
 kill cases         : 2 published (examples/) — incl. this tool's predecessor
 survivor           : the tool you are reading
 assumption registry: live (UNKNOWN → VALID/INVALIDATED lifecycle)
@@ -343,7 +355,7 @@ naysay postmortem "股票监控系统" --save postmortem.md
 ### 命令
 
 ```
-naysay                        交互式会话(默认)
+naysay                        三栏工作区(默认)
 naysay --continue             接着上一次的会话继续
 naysay repl                   纯 REPL(可脚本化、可管道)
 naysay premortem <idea>       假设它六个月后死了 — 看尸检
@@ -358,7 +370,7 @@ naysay sessions list|show     浏览历史会话
 naysay doctor                 配置 / key / 网络诊断
 ```
 
-全局 flag:`--save <PATH>`(写入文件)、`--json`(机器输出)、`--sound`(交互界面 8-bit 音效)、`--tui`(显式进交互模式)。
+全局 flag:`--save <PATH>`(写入文件)、`--json`(机器输出)、`--sound`(交互界面 8-bit 音效)、`--tui`(显式进交互模式)、`--inline`(工作区之前的内联转录,见下)。
 
 ```bash
 naysay spec "做知乎热榜爬虫" --save spec.md
@@ -367,7 +379,14 @@ naysay explain ./src/scraper.rs --json | jq .explanation
 
 ### 交互界面
 
-无边框、无全屏接管——对话就是终端自己的 scrollback 里的转录稿,Claude Code 风格。唯一的活动区是底部两行:`>` 输入行 + 一行暗色状态。退出后转录稿保留在原地。`Ctrl+↑/↓` 召回历史输入,`Tab` 补全命令,`@path` 引入文件,`@dir` 引入整棵源码树(有预算),`/resume [file]` 回到过去的会话,状态行显示每轮的 token 表。
+默认界面是三栏工作区:左边是探索和决策库,中间是转录,右边是当前决策的判决、置信度、假设和关联记录。判决不会滚走,假设登记表就在眼前——这就是工作区存在的理由(D-035)。
+
+- `Ctrl+F` 聚焦左栏的库过滤框;空格分隔的每个词都必须命中。
+- `↑`/`↓`、`PgUp`/`PgDn` 滚动转录;输入框为空时 `Home` 跳到最旧、`End` 回到末尾;提交后自动回到末尾。
+- `Ctrl+↑/↓` 召回历史输入,`Tab` 补全命令,`@path` 引入文件,`@dir` 引入整棵源码树(有预算),`/resume [file]` 回到过去的会话,状态行显示每轮的 token 表。
+- `Ctrl+S` 导出对话为 markdown;`Esc` / `Ctrl+C` 退出。
+
+工作区之前的内联转录(无边框、历史走终端自己的 scrollback、底部两行实时区)保留在 `--inline` 后面,直到工作区用满一周(D-035 M5)。
 
 ### Provider:任何 OpenAI 兼容端点
 
@@ -407,7 +426,7 @@ coding agent 在任务中途的那条 skill——在独立仓库 `naysay-agent`�
 这个工具跑在自己身上。当前状态，本仓库内可查：
 
 ```
-已入档决策   : 35 条（DECISIONS.md D-001 … D-036；D-027 未使用）
+已入档决策   : 38 条（DECISIONS.md D-001 … D-039；D-027 未使用）
 杀掉的项目   : 2 个已发布案例（examples/）—— 包括本工具的前身
 幸存者       : 你正在读的这个工具
 calibration  : naysay calibration（等真实决策闭环积累）

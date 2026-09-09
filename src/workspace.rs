@@ -236,6 +236,8 @@ async fn event_loop(
                             ctx.sound_enabled,
                             Arc::clone(ctx.prompts),
                         );
+                        // A new turn means the user wants to watch it stream.
+                        view.scroll = 0;
                         view.reload();
                     }
                     KeyAction::Save => match export_conversation(&state.history) {
@@ -318,6 +320,16 @@ fn handle_workspace_key(
         }
         KeyCode::Down if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             view.scroll = view.scroll.saturating_sub(1);
+            return KeyAction::None;
+        }
+        // With an empty input Home/End have nothing to edit, so they jump to
+        // the oldest row and back to the tail.
+        KeyCode::Home if input.is_empty() => {
+            view.scroll = u16::MAX;
+            return KeyAction::None;
+        }
+        KeyCode::End if input.is_empty() => {
+            view.scroll = 0;
             return KeyAction::None;
         }
         _ => {}
@@ -714,5 +726,26 @@ mod tests {
             text.contains("no decision saved yet"),
             "right pane empty state"
         );
+    }
+
+    #[test]
+    fn empty_input_home_end_move_the_transcript() {
+        let mut state = TuiState::default();
+        let mut input = String::new();
+        let mut view = View::default();
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+
+        handle_workspace_key(key(KeyCode::PageUp), &mut state, &mut input, &mut view);
+        assert_eq!(view.scroll, PAGE);
+        handle_workspace_key(key(KeyCode::Home), &mut state, &mut input, &mut view);
+        assert_eq!(view.scroll, u16::MAX, "Home jumps to the oldest row");
+        handle_workspace_key(key(KeyCode::End), &mut state, &mut input, &mut view);
+        assert_eq!(view.scroll, 0, "End returns to the tail");
+
+        // With text in the input, Home/End edit the line instead.
+        input.push_str("x");
+        handle_workspace_key(key(KeyCode::Home), &mut state, &mut input, &mut view);
+        assert_eq!(view.scroll, 0);
+        assert_eq!(state.cursor, 0);
     }
 }

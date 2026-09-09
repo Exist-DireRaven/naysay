@@ -4,7 +4,7 @@ One page. Currently binding rules only, each pointing at the decision that
 established it. The reasoning and the lineage live in
 [DECISIONS.md](DECISIONS.md), which is append-only — nothing there is deleted.
 
-*Last reconciled against D-037. If this file and an entry disagree, the entry
+*Last reconciled against D-039. If this file and an entry disagree, the entry
 wins and this file is wrong.*
 
 ## What naysay is
@@ -38,8 +38,10 @@ wins and this file is wrong.*
   has been used. — D-019
 - **"Clippy 0 warnings" is verified in CI**, not locally. — D-018
 - **CODEMAP.md is updated in the same edit** as any function change. — AGENTS.md
-- **Guardrails:** `main.rs` ≤ 4000 LOC, `tui.rs` ≤ 3000 LOC. Crossing either
-  line stops feature work and starts module extraction. — D-023
+- **Module boundaries are argued, not budgeted.** Extract when a file has
+  grown beyond comprehension or lost cohesion — never to satisfy a line
+  count. The LOC guardrail (`main.rs` ≤ 4000, `tui.rs` ≤ 3000) is retired.
+  — D-023, D-039
 
 ## Rejected, and staying rejected
 

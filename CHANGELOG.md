@@ -30,14 +30,22 @@ model call, on every surface. Per D-034.
   the active session and the decision store on the left, the streaming
   transcript in the centre, the current decision's verdict, confidence,
   assumptions and linked records on the right. The transcript is in-memory
-  (no more scrollback), scrolls with ↑↓ / PgUp / PgDn, and the right pane
-  reloads after every write. `Ctrl+F` focuses the left pane's store filter;
-  every whitespace-separated term must match a row.
+  (no more scrollback), scrolls with ↑↓ / PgUp / PgDn, and `Home`/`End`
+  with an empty input jump to the oldest row and back to the tail —
+  submitting returns to the tail. The right pane reloads after every write.
+  `Ctrl+F` focuses the left pane's store filter; every whitespace-separated
+  term must match a row.
 - **`src/text.rs` + `src/workspace.rs`.** Pure text layout and the
-  three-pane view moved out of `tui.rs`; it is back to 2615 lines, under
-  the D-023 guardrail with room for the rest of the workspace milestones.
+  three-pane view moved out of `tui.rs`; it is 2615 lines. The boundary is a
+  design choice, not a quota — the line ceiling was retired the same day
+  (D-039).
 
 #### Changed
+
+- **The LOC guardrail is retired (D-039).** `main.rs` ≤ 4000 and `tui.rs` ≤
+  3000 LOC is withdrawn. Module boundaries are argued on cohesion and
+  comprehension; `CODEMAP.md` plus review is the signal, not a number.
+  D-023's rejected list is untouched.
 
 - **`ensure_key()`** — the picker is a property of needing a model, not of
   launching the TUI. CLI and REPL commands run it before their first

@@ -1139,3 +1139,66 @@ on a few shared tokens. For a personal store of tens of records that bias is
 correct — recall matters more than precision — and the ranking plus the
 top-N cap bound the damage. If the store grows into the hundreds, this is the
 first thing to revisit.
+
+## D-039 · The LOC guardrail is retired (2026-09-09)
+
+**Decision:** D-023's line-count rule — `main.rs` ≤ 4000 LOC, `tui.rs` ≤
+3000 LOC — is withdrawn. Module boundaries remain a first-class concern, but
+the trigger is cohesion and comprehension, not a number. Nothing else in
+D-023 changes: its rejected list still stands.
+
+### Why
+
+The rule did the job it was written for. It forced `store.rs` out of
+`main.rs` in v0.5, kept `tui.rs` under its ceiling through four releases, and
+the extraction habit it created is why the workspace could land as a module
+instead of as a 3300-line file.
+
+Then it started working against the thing it was protecting:
+
+1. **It budgeted lines instead of designing modules.** D-035's milestones
+   were planned around "tui.rs regains headroom" rather than around where a
+   boundary belongs. The workspace needed roughly 700 lines, and the first
+   question was where they could go without crossing a number, not which
+   module was right.
+2. **The number is a poor proxy.** Three thousand lines of prompt wrappers
+   and three thousand lines of dispatch are not the same risk, and a line
+   count says nothing about coupling. It fired on size while missing the
+   failure that actually hurts: a file whose parts cannot be read
+   independently.
+3. **It gated the roadmap on extraction.** The workspace's own milestone 1
+   was "extract modules" — a prerequisite created by the ceiling, not by the
+   feature. Extraction is still good work; being forced to do it before the
+   work the user asked for is not.
+
+### What it displaces (the D-019 rule)
+
+The LOC clause of D-023, and only that. D-023's rejected list — browser UI,
+MCP server, cloud sync, team dashboards, plugins, agent orchestration, a
+vector store, SaaS — is the precedent that keeps them rejected and is
+untouched.
+
+### What replaces it
+
+Nothing mechanical. The signals that matter already exist: `CODEMAP.md`
+makes a file's shape auditable and is updated in the same edit as any
+function change, AGENTS.md's "refactor when something is concretely wrong or
+has grown beyond comprehension" stays binding, and D-019's "no featuritis —
+the next version does not start until the current one has been used" still
+bounds growth from the other side. Extracting a module is a design decision,
+argued on its merits.
+
+### Trade-offs
+
+Without a hard number, a file can quietly double before anyone notices. The
+mitigation is the map plus review, not a ceiling: a file that has outgrown
+its description shows up in the CODEMAP diff. If that proves insufficient,
+the fix is a better signal — per-module ownership notes, say — rather than
+the old quota.
+
+### Verification
+
+- `src/text.rs` and `src/workspace.rs` exist because of the old rule; both
+  stay, because both are the right boundary. No code moves back.
+- 92/92 tests, clippy `-D warnings` and fmt clean, release build verified.
+

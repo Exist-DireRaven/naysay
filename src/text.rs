@@ -1,8 +1,8 @@
 //! Pure text layout: display widths, input windows, and wrapping.
 //!
-//! Extracted from `tui.rs` (D-023's 3000-line guardrail; D-035 M2 needs the
-//! headroom). Everything here is pure and terminal-free, so the TUI's cursor
-//! placement and the transcript's row wrapping can be tested without a TTY.
+//! Extracted from `tui.rs` for the workspace work (D-035 M2). Everything here
+//! is pure and terminal-free, so the TUI's cursor placement and the
+//! transcript's row wrapping can be tested without a TTY.
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};

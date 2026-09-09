@@ -261,7 +261,7 @@ live in `tui.rs`.
 |--------|--------------|
 | `run` | Enter alternate screen + raw mode, install a panic hook that restores the terminal, run the event loop, restore on exit. |
 | `event_loop` | Drain `TuiEvent`s (a finished call also reloads the store snapshots), draw, poll keys, tick the spinner. |
-| `handle_workspace_key` | On top of `tui::handle_key`: transcript scrolling (↑↓ / PgUp / PgDn), Ctrl+F to focus the store filter, and the filter's own editing keys. |
+| `handle_workspace_key` | On top of `tui::handle_key`: transcript scrolling (↑↓ / PgUp / PgDn, plus Home/End when the input is empty), Ctrl+F to focus the store filter, and the filter's own editing keys. |
 | `draw` | Three-column layout; the centre column is transcript / input row / status row. |
 | `draw_transcript` | In-memory transcript: `entry_to_lines` + `wrap_entry_lines` per frame, scrolled from the tail; cursor placed by display width so CJK lands right. |
 | `draw_exploration` | Store filter, active session steps (newest 8), and the filtered store list (newest 20) with the shown record marked. |
@@ -276,7 +276,7 @@ asserts all three panes draw.
 
 ## `src/text.rs` (≈ 290 lines)
 
-Pure text layout, extracted from `tui.rs` (D-023's 3000-line guardrail; D-035 M2).
+Pure text layout, extracted from `tui.rs` for the workspace work (D-035 M2).
 No terminal state, no I/O — every function here is unit-tested.
 
 | symbol | what it does |
