@@ -965,3 +965,68 @@ path.
 - The picker still presents Ollama as one row among seven cloud providers.
   Making "local, free, no key" the first fork is a separate UX decision,
   not this entry.
+
+## D-035 · The TUI becomes a workspace: three panes, not one transcript (2026-09-09)
+
+**Decision:** The TUI's information architecture changes from a single inline
+transcript to a three-pane workspace — exploration and the decision store on
+the left, the transcript in the centre, the current decision's verdict and
+assumptions on the right. This **overturns D-016** (inline transcript, no
+chrome), which was a deliberate choice and has become a liability: the two
+things naysay exists to make visible — the verdict and the assumption
+registry — have nowhere to live in a scrolling log.
+
+### Why
+
+1. **The registry is invisible.** v0.7 shipped assumption lifecycles and
+   v0.10 made the TUI feed them, but the only way to *see* an assumption is
+   `naysay decisions assumptions` in another process. A decision tool whose
+   decision state is off-screen is a chat log with extra steps.
+2. **The verdict scrolls away.** The verdict is the product. Inline, it is
+   one line among hundreds and it leaves the viewport as soon as the next
+   command runs.
+3. **The store has no surface.** `decisions relevant` is a subcommand, not a
+   view; browsing what was previously decided should not mean retyping a
+   query.
+
+### What it displaces (the D-019 rule)
+
+It displaces **D-016**. That is the point, and it is recorded here rather
+than done quietly. It does **not** reopen D-023's rejection of a web UI:
+this is the same information architecture rendered with the terminal naysay
+already ships — no server, no new dependency. The rejected item stays
+rejected.
+
+### What is lost, and how it is mitigated
+
+- **The transcript no longer survives exit in scrollback.** D-016's argument
+  was "when you quit, the transcript stays readable". Mitigation: `--save`,
+  the session JSONL, and an explicit export. If the loss proves worse than
+  the gain, the workspace becomes opt-in instead of default — that is the
+  rollback.
+- **Wide-character rendering.** D-024's CJK fix was specific to the inline
+  path; the workspace renders through ratatui's normal buffer path and must
+  re-earn it. UI strings are English, which bounds the risk.
+- **`tui.rs` is at 2928 of its 3000-line guardrail (D-023).** Feature work
+  cannot start until modules are extracted. That extraction is milestone 1,
+  not a side quest.
+
+### Milestones
+
+1. Extract the four verdict prompt templates into one shared module, so the
+   CLI and the TUI read the same text (this also closes D-031's deferred
+   item) and `tui.rs` regains headroom.
+2. Switch the TUI to the alternate screen and lay out three panes; the
+   transcript keeps streaming in the centre.
+3. Wire the right pane to the store: verdict, confidence, assumptions with
+   lifecycle, linked records — refreshed after every write.
+4. Wire the left pane: session steps and a searchable store list.
+5. Keep the inline mode behind a flag until the workspace has been used for
+   a week, then decide which is the default.
+
+### Language
+
+One language per surface. UI strings, code, comments and new documentation
+are **English**. The README keeps its Chinese section as a translation — a
+translation is not a mix. Model output follows the user's language, as
+before.
