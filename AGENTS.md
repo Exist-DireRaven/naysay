@@ -24,6 +24,10 @@ The user (Dire) is the authority. The agent is an advisor.
 
 - Every design decision lives in `DECISIONS.md`. New D-entries are written
   in the user's voice *before* code lands.
+- **`RULES.md` is the one-page rulebook; `DECISIONS.md` is the append-only
+  reasoning behind it.** Read `RULES.md` first to know what naysay is
+  committed to. A new entry that changes a binding rule updates `RULES.md` in
+  the same commit.
 - Every function's purpose lives in `CODEMAP.md`. When you change a
   function, update the map in the same commit.
 - If the user asks "should I do X?" the answer is a recommendation with

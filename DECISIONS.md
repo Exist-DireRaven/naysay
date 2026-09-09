@@ -1030,3 +1030,37 @@ One language per surface. UI strings, code, comments and new documentation
 are **English**. The README keeps its Chinese section as a translation — a
 translation is not a mix. Model output follows the user's language, as
 before.
+
+## D-036 · RULES.md: a rulebook view over the append-only log (2026-09-09)
+
+**Decision:** Add `RULES.md` — one page listing only the currently binding
+rules, each pointing at the entry that established it. `DECISIONS.md` stays
+append-only and keeps its IDs. `AGENTS.md` points agents at `RULES.md` first.
+A new entry that changes a binding rule updates `RULES.md` in the same commit.
+
+### Why
+
+The log is a log: 34 entries, most of them the record of one change, and
+reading it as a rulebook is work. The owner asked to delete the outmoded
+entries and renumber the rest. That was declined and this is the alternative,
+for two reasons that are concrete rather than sentimental:
+
+1. **The IDs are load-bearing.** 145 references to D-numbers live outside the
+   log — in AGENTS.md, the README, the CHANGELOG, CODEMAP, `examples/`, and
+   four source files. Renumbering breaks every one of them silently.
+2. **The rejections are the guardrail.** D-023's rejected list is what stops a
+   browser UI, an MCP server or a plugin framework from being proposed again.
+   It was cited three times in the last two days — including for the web UI
+   that was requested and refused. Deleting it deletes the precedent.
+
+It is also worth recording what the audit actually found: most entries are not
+outmoded. Only D-001, D-017, D-020, D-021 are pure history, and only D-016 is
+overturned (by D-035). The complaint was about how the file *reads*, not about
+what it contains — which is a presentation problem, and this is the
+presentation fix.
+
+### Trade-offs
+
+Two files to keep in sync. The mitigation is the update rule above plus a
+"last reconciled against D-0NN" line at the top of `RULES.md`, so drift is
+visible rather than silent.
