@@ -16,6 +16,108 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
+### naysay v0.10.0 — 2026-09-09
+
+**The decision loop closes on the surface people actually use.** Until this
+release the TUI — the default entry point — remembered nothing: no records,
+no memory injection. Now all four verdict commands write to the store and
+read from it, and their prompts carry the structured sections the CLI has
+emitted since v0.2. Per D-031.
+
+#### Changed
+
+- **The TUI writes decisions.** `run_premortem`, `run_spec`,
+  `run_postmortem` and `run_check` call `store::save_verdict` (record +
+  session step) and prepend `resolve()` context, exactly like the CLI path.
+- **TUI prompt parity.** The TUI's premortem and check templates now end
+  with `VERDICT: BUILD | DON'T BUILD`; premortem gains the
+  `ASSUMPTIONS / EVIDENCE / UNKNOWNS / CONFIDENCE` block; spec gains
+  `Assumptions / Failure conditions / Risk budget`. The assumption registry
+  and `calibration` are now fed from both surfaces.
+- **`prompts.toml` key `check`** is covered by a test that the override
+  actually resolves.
+
+#### Dogfood
+
+Every claim above was exercised against the live tool before this entry was
+written:
+
+- `naysay check "<the v0.10 plan>"` → `VERDICT: BUILD` — the first real
+  record (`check-a7ae928531f6`) and the first real assumptions in the
+  registry.
+- `naysay check "<the image-to-GIF decision>"` → `VERDICT: DON'T BUILD` —
+  use ffmpeg, don't write a pipeline. The Gifkit case, answered in 900
+  tokens.
+- `naysay check "<make naysay a skill>"` → `VERDICT: DON'T BUILD` — reuse
+  what exists rather than build a new skill. Consistent with the two
+  premortems of the same idea earlier the same day.
+
+#### Known gap
+
+- **D-032:** standalone CLI commands auto-create a decision session, so a
+  later standalone command on an unrelated idea is injected with the first
+  one's context. Found by dogfooding — the first GIF check answered the
+  previous TUI question. Deferred with a stated re-open condition; the
+  workaround today is `naysay session close`.
+
+#### Notes
+
+- 84/84 tests pass (two new: `op_kind_round_trips_including_check`,
+  `prompts_check_key_resolves_override_and_default`),
+  `cargo clippy -- -D warnings` clean, `cargo fmt --check` clean, release
+  build verified.
+- LOC: main.rs 3312, tui.rs 2928, store.rs ~1780. Both D-023 guardrails
+  hold; `tui.rs` is at 98% of its ceiling.
+
+---
+
+### naysay v0.9.0 — 2026-09-09
+
+**The decision loop gains its most frequent entry point.** The premortem
+fires once per project; most decisions are smaller and more frequent — a
+dependency, an abstraction, a rewrite. `naysay check` is that entry
+point, logged as the "first candidate" in D-023 and never shipped until
+now.
+
+#### Added
+
+- **`naysay check <decision>`** — the engineering-decision
+  interrogation. Five sections: the actual problem, existing coverage
+  (repo / dependencies / PATH), minimum form, six-month failure mode,
+  verdict. Ends with `VERDICT: BUILD` or `VERDICT: DON'T BUILD` so
+  `calibration` can link it to a later postmortem. Available as a CLI
+  subcommand, a REPL command, and a TUI command.
+- **`Op::Check`** — the new op enters the decision session and the
+  decision store, and its prompt carries the same memory injection as
+  premortem: prior verdicts on similar ideas (top 2), session
+  exploration, and assumption-risk lines.
+- **`prompts.toml` key `check`** — override the default template like
+  any other command.
+
+#### Fixed
+
+- **`premortem` wrote two decision records per run.** It called
+  `save_decision` once to obtain the id for the session step, then again
+  at the end. Every premortem since v0.3 left a duplicate in
+  `.naysay/decisions/`, which would have inflated the calibration pairs.
+  It now saves once.
+
+#### Notes
+
+- 83/83 tests pass (one new: `op_kind_round_trips_including_check`),
+  `cargo clippy -- -D warnings` clean, `cargo fmt --check` clean,
+  release build verified.
+- LOC: main.rs ~3300, tui.rs ~2880, store.rs ~1750. Both D-023
+  guardrails still hold (main.rs ≤ 4000, tui.rs ≤ 3000) — tui.rs is at
+  96% of its line.
+- **Known gap, logged for v0.10:** the TUI's verdict commands
+  (`run_premortem` / `run_spec` / `run_postmortem` / `run_check`) still
+  do not write to the decision store or inject memory, although D-021
+  said the interactive path would. Only the CLI and REPL paths do.
+  Closing that gap is the first candidate for v0.10.
+
+---
+
 ### naysay v0.8.0 — 2026-09-05
 
 ContextResolver: the single place that decides what context an operation
@@ -477,6 +579,94 @@ First naysay release. Built on pair v1.3.
 <a id="中文"></a>
 
 ## 中文
+
+### naysay v0.10.0 — 2026-09-09
+
+**决策循环在人真正会用的那个界面上闭合了。** 在此之前，TUI（默认入口）
+什么都不记：不写记录、不注入记忆。现在四个判决命令都写入存储、也从存储
+读取，prompt 带上了 CLI 从 v0.2 起就有的结构化段落。见 D-031。
+
+#### 变更
+
+- **TUI 开始写决策。** `run_premortem` / `run_spec` / `run_postmortem` /
+  `run_check` 调用 `store::save_verdict`（记录 + session step）并前置
+  `resolve()` 上下文，与 CLI 路径一致。
+- **TUI prompt 对齐。** premortem 与 check 模板现在以
+  `VERDICT: BUILD | DON'T BUILD` 结尾；premortem 补上
+  `ASSUMPTIONS / EVIDENCE / UNKNOWNS / CONFIDENCE`；spec 补上
+  `Assumptions / Failure conditions / Risk budget`。假设注册表和
+  `calibration` 现在两个界面都喂得到。
+- **`prompts.toml` 的 `check` 键**有了覆盖是否生效的测试。
+
+#### 狗粮
+
+本条目的每一条声明在写之前都对着真工具跑过：
+
+- `naysay check "<v0.10 计划>"` → `VERDICT: BUILD`，第一条真实记录
+  （`check-a7ae928531f6`）和注册表里的第一批真实假设。
+- `naysay check "<图片转 GIF 的决定>"` → `VERDICT: DON'T BUILD` —— 用
+  ffmpeg，别写管线。Gifkit 那个案例，900 tokens 答对。
+- `naysay check "<把 naysay 做成 skill>"` → `VERDICT: DON'T BUILD` ——
+  复用已有的，不要新建 skill。与当天早些时候同一想法的两次 premortem
+  一致。
+
+#### 已知缺口
+
+- **D-032：** CLI 独立命令会自动创建 decision session，于是之后一条关于
+  无关想法的独立命令会被注入第一条的上下文。狗粮时发现——第一次 GIF
+  检查回答的是上一条 TUI 的问题。已按"写出重新打开条件"的方式延后；
+  当前的绕过方式是 `naysay session close`。
+
+#### 备注
+
+- 84/84 测试通过（新增 `op_kind_round_trips_including_check`、
+  `prompts_check_key_resolves_override_and_default`），
+  `cargo clippy -- -D warnings` 干净，`cargo fmt --check` 干净，
+  release 构建已验证。
+- LOC：main.rs 3312，tui.rs 2928，store.rs ~1780。D-023 两条守卫线
+  成立；tui.rs 已到 98%。
+
+---
+
+### naysay v0.9.0 — 2026-09-09
+
+**决策循环拿到了它最常用的入口。** premortem 每个项目只触发一次；
+而大多数决定更小、更频繁——加一个依赖、抽一层抽象、重写一个模块。
+`naysay check` 就是那个入口，D-023 里写下的 "first candidate"，自
+v0.5 起挂着，一直没落地。
+
+#### 新增
+
+- **`naysay check <decision>`** — 工程决策审问。五段：真实问题、
+  已有覆盖（仓库 / 依赖 / PATH）、最小形态、六个月后的失败模式、
+  判决。结尾输出 `VERDICT: BUILD` 或 `VERDICT: DON'T BUILD`，让
+  `calibration` 能把它和之后的 postmortem 连起来。CLI 子命令、
+  REPL 命令、TUI 命令三处可用。
+- **`Op::Check`** — 新操作进入决策会话与决策存储，prompt 与
+  premortem 一样带记忆注入：相似想法的历史判决（取 2 条）、会话
+  探索、假设风险行。
+- **`prompts.toml` 新增 `check` 键** — 与其他命令一样可覆盖默认模板。
+
+#### 修复
+
+- **`premortem` 每次运行写两条决策记录。** 它先调一次
+  `save_decision` 拿 id 给 session step，结尾又调了一次。v0.3 以来
+  的每次 premortem 都在 `.naysay/decisions/` 里留下重复记录，会虚高
+  calibration 的配对数量。现在只写一次。
+
+#### 备注
+
+- 83/83 测试通过（新增 `op_kind_round_trips_including_check`），
+  `cargo clippy -- -D warnings` 干净，`cargo fmt --check` 干净，
+  release 构建已验证。
+- LOC：main.rs ~3300，tui.rs ~2880，store.rs ~1750。D-023 的两条
+  守卫线仍成立（main.rs ≤ 4000、tui.rs ≤ 3000）——tui.rs 已到 96%。
+- **已知缺口，记入 v0.10：** TUI 的判决类命令（`run_premortem` /
+  `run_spec` / `run_postmortem` / `run_check`）仍不写决策存储、不注入
+  记忆，尽管 D-021 说过交互路径会写。目前只有 CLI 和 REPL 路径会写。
+  补上它是 v0.10 的第一候选。
+
+---
 
 ### naysay v0.8.0 — 2026-09-05
 

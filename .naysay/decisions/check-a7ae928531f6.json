@@ -1,0 +1,21 @@
+{
+  "id": "a7ae928531f6",
+  "kind": "check",
+  "ts": 1788959794,
+  "idea": "v0.10: wire the TUI's four verdict commands (premortem/spec/postmortem/check) to the decision store — save_decision + record_session_step + resolve() — and bring the TUI prompt templates to parity with the CLI. No new commands, no new deps, tui.rs must stay under 3000 LOC.",
+  "parent": null,
+  "body": "### 1. The actual problem\nThe TUI (Terminal User Interface) commands for handling verdicts (premortem/spec/postmortem/check) need to be integrated with the decision store to ensure consistent data handling and to align the user experience with the CLI.\n\n### 2. Existing coverage\n- **In this repo**: The CLI commands for handling verdicts likely already exist and interact with the decision store. The TUI may have some basic command handling, but it is not specified if these are already integrated with the decision store.\n- **Dependencies already installed**: No specific dependencies mentioned that handle this integration.\n- **Tools on PATH**: No external tools mentioned that handle this integration.\n\n### 3. Minimum form\nThe minimum form would involve:\n- Integrating the TUI commands with the `save_decision`, `record_session_step`, and `resolve()` functions.\n- Updating the TUI prompt templates to match the CLI.\n- Ensuring that no new commands or dependencies are introduced.\n- Keeping the TUI code under 3000 LOC.\n\n### 4. Six-month failure mode\n- **Maintenance debt**: The integration could become a point of failure if the decision store API changes, requiring updates to the TUI commands.\n- **Code complexity**: The TUI code could become more complex and harder to maintain if the integration is not done cleanly, especially if the TUI code is already close to the 3000 LOC limit.\n- **Feature parity issues**: If the CLI and TUI diverge in functionality, maintaining parity could become difficult, leading to inconsistent user experiences.\n\n### 5. Verdict\nThe integration of the TUI commands with the decision store and the alignment of prompt templates with the CLI are necessary for a consistent user experience and data handling. However, the implementation must be carefully managed to avoid increasing code complexity and maintenance burden.\n\n**VERDICT: BUILD**\n\n### ASSUMPTIONS\n1. The CLI commands for handling verdicts are already integrated with the decision store and can serve as a reference for the TUI integration.\n2. The TUI code is modular enough to allow for the integration of the decision store without significant refactoring.\n3. The decision store API will remain stable or will be versioned in a way that allows the TUI to adapt to changes without breaking.\n4. The TUI prompt templates can be updated to match the CLI without introducing new dependencies or significantly increasing the LOC.\n5. The development team has the capacity to handle the integration and testing of the TUI commands with the decision store within the current project timeline.",
+  "assumptions": [
+    "The CLI commands for handling verdicts are already integrated with the decision store and can serve as a reference for the TUI integration.",
+    "The TUI code is modular enough to allow for the integration of the decision store without significant refactoring.",
+    "The decision store API will remain stable or will be versioned in a way that allows the TUI to adapt to changes without breaking.",
+    "The TUI prompt templates can be updated to match the CLI without introducing new dependencies or significantly increasing the LOC.",
+    "The development team has the capacity to handle the integration and testing of the TUI commands with the decision store within the current project timeline."
+  ],
+  "evidence": [],
+  "unknowns": [],
+  "failure_conditions": [],
+  "confidence": null,
+  "verdict": "BUILD",
+  "outcome": null
+}

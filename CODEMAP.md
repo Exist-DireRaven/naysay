@@ -12,13 +12,13 @@ This file is part of the codebase. If you change the rules, change this file.
 Companion to `DECISIONS.md` (which answers "why?"). This answers
 "what?".
 
-Codebase at v0.7.0: ~6700 lines across `src/main.rs` + `src/tui.rs` + `src/store.rs`.
+Codebase at v0.10.0: ~8000 lines across `src/main.rs` + `src/tui.rs` + `src/store.rs`.
 If you can read all three files end-to-end with this map in hand, you own the
 tool. If you can't, that's the part to study next.
 
 ---
 
-## `src/main.rs` (≈ 1750 lines)
+## `src/main.rs` (≈ 3310 lines)
 
 ### CLI layer
 
@@ -89,6 +89,7 @@ tool. If you can't, that's the part to study next.
 | `seed` | `seed <topic>` — 5-10 angles the user probably hasn't considered. Calls `call_llm`, formats with `── topic ──` header. |
 | `drill` | `drill <idea>` — 3-5 actionable sub-points. Calls `call_llm`. |
 | `premortem` | `premortem <idea>` — assume the idea died in 6 months, write the autopsy (cause, ranked killers, scope autopsy, surviving version, verdict). |
+| `check` | `check <decision>` — v0.9 engineering-decision entry point: the same interrogation aimed at a dependency / abstraction / rewrite that is about to become code. Shorter and cheaper than premortem (900 max tokens, temp 0.4) because it runs many times per project, not once. Writes a `check` record to the store and a session step. |
 | `spec` | `spec <idea>` — produce a spec the agent can't misinterpret: goal / non-goals / success criteria / constraints / milestones / open questions. |
 | `postmortem` | `postmortem <idea> [notes]` — the project is over; write the review (what happened, predicted-vs-actual, decisive moment, cost accounting) plus a self-contained decision-log entry. |
 | `explain` | `explain <file>` — read the file, send to LLM with "walk through this file" framing. Truncates to 24k chars. |
@@ -99,7 +100,7 @@ tool. If you can't, that's the part to study next.
 |--------|--------------|
 | `ReplState` | REPL conversation memory: `history` (full, user turns carry the language hint from birth), `context_turns` (0..=10), `session_path`. `context()` returns the last N pairs; `record()` appends an exchange to memory + logs the assistant side. |
 | `repl` | Stdin reader. Opens a session log, replays a resumed session when given one (`--continue`), prints the `naysay>` prompt, dispatches each line via `dispatch_repl`, logs user input. |
-| `dispatch_repl` | Naive `command + rest` split over a `&mut ReplState`. Recognized: `help` / `quit` / `seed` / `drill` / `premortem` / `spec` / `postmortem` / `explain` / `/context` / `/clear` / `key` / `sessions`. LLM-backed commands send the context window and call `record()` afterwards. Unknown → error (no freeform in scripted mode). |
+| `dispatch_repl` | Naive `command + rest` split over a `&mut ReplState`. Recognized: `help` / `quit` / `seed` / `drill` / `premortem` / `check` / `spec` / `postmortem` / `explain` / `/context` / `/clear` / `key` / `sessions`. LLM-backed commands send the context window and call `record()` afterwards. Unknown → error (no freeform in scripted mode). |
 
 ### LLM HTTP
 
@@ -164,7 +165,7 @@ tool. If you can't, that's the part to study next.
 
 ---
 
-## `src/tui.rs` (≈ 1640 lines)
+## `src/tui.rs` (≈ 2930 lines)
 
 ### Entry + lifecycle
 
@@ -205,9 +206,11 @@ tool. If you can't, that's the part to study next.
 | `run_questions` | `questions <topic>` — deep questions. |
 | `run_contrarian` | `contrarian <claim>` — steelman the opposite. |
 | `run_use_cases` | `use-cases <thing>` — concrete user scenarios. |
-| `run_premortem` | `premortem <idea>` — autopsy. |
-| `run_spec` | `spec <idea>` — agent-ready spec. |
-| `run_postmortem` | `postmortem <idea>` — the review + decision-log entry. |
+| `run_premortem` | `premortem <idea>` — autopsy. Since v0.10 writes a record + session step, prepends `resolve()` memory, and emits `VERDICT:` plus the structured sections. |
+| `run_check` | `check <decision>` — v0.9 pre-existence check for an engineering decision; v0.10 gives it the same store write and memory as premortem. |
+| `run_spec` | `spec <idea>` — agent-ready spec; v0.10 adds the store write, memory, and the CLI's `Assumptions / Failure conditions / Risk budget` sections. |
+| `run_postmortem` | `postmortem <idea>` — the review + decision-log entry; v0.10 adds the store write and memory. |
+| `with_memory` | Prepend `resolve()` context to a TUI verdict prompt — the TUI's half of the shared decision memory (v0.10 / D-031). |
 | `run_pros` | `pros <idea>` — genuine strengths. |
 | `run_cons` | `cons <idea>` — genuine weaknesses. |
 | `run_risks` | `risks <idea>` — failure modes. |

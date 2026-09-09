@@ -205,6 +205,25 @@ pub(crate) fn save_decision(
     save_decision_to(&dir, kind, idea, body, parent, now)
 }
 
+/// Persist a verdict and record its session step in one call — the shared
+/// entry point for every surface that produces a decision (CLI, REPL, TUI).
+/// Before v0.10 the TUI called neither, so decisions made on the default
+/// surface were never remembered (D-031).
+pub(crate) fn save_verdict(op: &Op, kind: &str, idea: &str, body: &str) -> Option<String> {
+    let id = match save_decision(kind, idea, body, None) {
+        Ok(id) => {
+            eprintln!("decision-store: saved {kind} {id} under .naysay/decisions/");
+            Some(id)
+        }
+        Err(e) => {
+            eprintln!("decision-store: save failed: {e}");
+            None
+        }
+    };
+    record_session_step(op, idea, body, id.as_deref(), true);
+    id
+}
+
 pub(crate) fn read_record_by_id(dir: &std::path::Path, id: &str) -> Option<DecisionRecord> {
     let short = id.splitn(2, '-').last().unwrap_or(id);
     let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
@@ -828,6 +847,7 @@ pub(crate) enum Op {
     Seed,
     Drill,
     Premortem,
+    Check,
     Spec,
     Postmortem,
 }
@@ -838,6 +858,7 @@ impl Op {
             Op::Seed => "seed",
             Op::Drill => "drill",
             Op::Premortem => "premortem",
+            Op::Check => "check",
             Op::Spec => "spec",
             Op::Postmortem => "postmortem",
         }
@@ -848,6 +869,7 @@ impl Op {
             "angles" | "seed" => Some(Op::Seed),
             "drill" | "pros" => Some(Op::Drill),
             "premortem" => Some(Op::Premortem),
+            "check" => Some(Op::Check),
             "spec" => Some(Op::Spec),
             "postmortem" => Some(Op::Postmortem),
             _ => None,
@@ -1110,7 +1132,7 @@ pub(crate) fn assemble_session_block(op: &Op, session: &DecisionSession, now: u6
             out.push_str("RULES: go deeper on THIS branch — not sideways.\n");
             out
         }
-        Op::Premortem => {
+        Op::Premortem | Op::Check => {
             let mut out = format!(
                 "SESSION CONTEXT — current decision in formation:\n{root}\n\nexploration so far (the user's selected path):\n"
             );
@@ -1394,9 +1416,9 @@ pub(crate) fn resolve(op: &Op, idea: &str, parent: Option<&str>) -> SelectedCont
             .count();
     }
 
-    // ── Historical decisions (premortem and seed only — spec/postmortem
-    //    see the premortem decision, not the store again) ──
-    if matches!(op, Op::Premortem | Op::Seed) {
+    // ── Historical decisions (premortem, check and seed only —
+    //    spec/postmortem see the premortem decision, not the store again) ──
+    if matches!(op, Op::Premortem | Op::Check | Op::Seed) {
         let Ok(dir) = decisions_dir() else {
             return ctx;
         };
@@ -1415,7 +1437,11 @@ pub(crate) fn resolve(op: &Op, idea: &str, parent: Option<&str>) -> SelectedCont
                 .collect();
             scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-            let top = if matches!(op, Op::Premortem) { 3 } else { 1 };
+            let top = match op {
+                Op::Premortem => 3,
+                Op::Check => 2,
+                _ => 1,
+            };
             let relevant: Vec<&(f64, &DecisionRecord)> = scored.iter().take(top).collect();
             ctx.historical_count = relevant.len();
 
@@ -1458,8 +1484,8 @@ pub(crate) fn resolve(op: &Op, idea: &str, parent: Option<&str>) -> SelectedCont
         }
     }
 
-    // ── Assumption risk lines (premortem only) ──
-    if matches!(op, Op::Premortem) {
+    // ── Assumption risk lines (premortem and check) ──
+    if matches!(op, Op::Premortem | Op::Check) {
         if let Ok(dir) = decisions_dir() {
             let risks = assumption_risk_lines(&dir, idea, now, 5);
             ctx.assumption_count = risks.len();
@@ -1592,6 +1618,25 @@ mod tests {
         let s_none = relevance_score(&a, &none);
         assert!(s_partial > s_none);
         assert_eq!(s_none, 0.0);
+    }
+
+    #[test]
+    fn op_kind_round_trips_including_check() {
+        // `check` is the v0.9 engineering-decision op. The store, the session
+        // and the prompt builder all key off these strings, so a silent
+        // mismatch here would drop records out of the memory window.
+        for (op, kind) in [
+            (Op::Seed, "seed"),
+            (Op::Drill, "drill"),
+            (Op::Premortem, "premortem"),
+            (Op::Check, "check"),
+            (Op::Spec, "spec"),
+            (Op::Postmortem, "postmortem"),
+        ] {
+            assert_eq!(op.as_str(), kind);
+            assert_eq!(Op::from_kind(kind), Some(op));
+        }
+        assert_eq!(Op::from_kind("not-an-op"), None);
     }
 
     // ─── assumption registry (v0.7) ─────────────────────────────────────────────

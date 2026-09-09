@@ -1,8 +1,8 @@
 [package]
 name = "naysay"
-version = "0.8.0"
+version = "0.10.0"
 edition = "2021"
-description = "The voice that says no before your coding agents say yes — seed, drill, premortem, spec in your terminal"
+description = "The voice that says no before your coding agents say yes — seed, drill, check, premortem, spec in your terminal"
 license = "MIT"
 repository = "https://github.com/Exist-DireRaven/naysay"
 build = "build.rs"

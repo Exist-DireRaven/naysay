@@ -752,3 +752,145 @@ completely outside the session — they were fully stateless, saved
 nothing, and their outputs were invisible to premortem/spec. This meant
 the promised seed → drill → premortem lineage was broken at the first
 link.
+
+## D-030 · v0.9 — `check`: the engineering-decision entry point (2026-09-09)
+
+**Decision:** v0.9 adds one command, `naysay check <decision>`. It is the
+premortem aimed at a decision that is about to become code — a
+dependency, an abstraction, a rewrite — and it is deliberately cheaper
+(900 max tokens, temp 0.4) because it runs many times per project, not
+once per project. CLI, REPL and TUI all get it. No new dependency, no new
+file format, no new type beyond `Op::Check`.
+
+### Why
+
+1. **D-023 already logged this as the next candidate.** v0.5 deferred
+   `naysay check` with the note that "the usage-frequency argument is the
+   strongest point in the review"; v0.6 / v0.7 / v0.8 shipped other
+   things. This is that entry point finally landing, not a new idea.
+2. **The premortem's granularity is wrong for the decisions that
+   actually accumulate.** "Should this project exist" is asked once.
+   "Should this be a dependency / a new module / a rewrite" is asked
+   several times a week, and it is the question an agent is most likely
+   to answer by building. A tool that only fires at project scale cannot
+   catch the daily version.
+3. **It shares the whole decision loop instead of duplicating it.**
+   `check` writes a record to `.naysay/decisions/`, records a session
+   step, emits `VERDICT: BUILD|DON'T BUILD` for `calibration`, and its
+   prompt carries the same memory injection as premortem (prior verdicts
+   on similar ideas, session exploration, assumption-risk lines). No
+   parallel machinery.
+
+### What it competes with (the D-019 rule)
+
+Nothing rejected. It is not an MCP server, not a plugin, not agent
+orchestration, not a web UI — it is one more subcommand over machinery
+that already exists. It does **not** reintroduce the rejected verdict
+taxonomy: the verdict stays binary (`BUILD` / `DON'T BUILD`), and the
+"reuse / reduce" nuance stays in prose, where premortem already puts it.
+
+### Fixed on the way
+
+`premortem` called `save_decision` twice per run — once to get the id for
+the session step, once at the end. Every premortem since v0.3 wrote two
+records. Duplicates would have inflated the calibration pairs, so this
+lands with the feature that depends on them.
+
+### Deferred (with the condition that re-opens it)
+
+**The TUI does not write to the decision store.** `run_premortem`,
+`run_spec`, `run_postmortem` and `run_check` are stateless, although
+D-021 said the interactive path would write records. Only the CLI and
+REPL paths do. This is the first candidate for v0.10: the gap makes the
+"naysay remembers what you decided" claim false for the default UI. It is
+deferred, not rejected, because closing it changes three existing
+commands and `tui.rs` is at 96% of its D-023 line guardrail.
+
+### Trade-offs
+
+- A check is an LLM call. It costs a fraction of a cent and a few
+  seconds; on Ollama it is free. That is the price of the deeper
+  interrogation the deterministic pre-existence skill cannot do.
+- Two prompt definitions now exist for it (CLI/REPL in `main.rs`, TUI in
+  `tui.rs`), matching the existing duplication for premortem / spec.
+  Unifying them belongs to the v0.10 TUI work, not this release.
+
+## D-031 · v0.10 — the TUI joins the decision loop (2026-09-09)
+
+**Decision:** The four TUI verdict commands (`run_premortem`, `run_spec`,
+`run_postmortem`, `run_check`) now write a decision record and a session
+step, and their prompts carry the same `resolve()` context the CLI path
+gets. The TUI prompt templates move to parity with the CLI's — structured
+sections plus the `VERDICT:` line — so the assumption registry and
+`calibration` are fed from both surfaces. No new command, no new flag, no
+new dependency.
+
+### Why
+
+1. **D-021 promised this and the code never did it.** D-021 says
+   `premortem` / `spec` / `postmortem` write a record "when `--save` or no
+   `--save` but running interactively, i.e. TUI". `tui.rs` contained zero
+   `store::` calls. The default surface — the one a double-click lands in —
+   remembered nothing, so the product's central claim ("naysay remembers
+   what you decided") was false on the surface most people actually use.
+2. **The store was empty on the machine that wrote the tool.** After seven
+   versions of decision-memory work, `.naysay/decisions/` held nothing.
+   The first real record (`check-a7ae928531f6` — this release's own
+   pre-existence check of the v0.10 plan, VERDICT: BUILD) was written by
+   the CLI path on 2026-09-09. A feature its own author never used is not a
+   feature.
+3. **The two prompt definitions had drifted.** The TUI's premortem
+   template stopped at section 5 and never emitted `ASSUMPTIONS` /
+   `VERDICT:`, which the CLI's had since v0.2. So even a TUI user who found
+   the store would have produced records the registry could not learn
+   from.
+
+### What it competes with (the D-019 rule)
+
+Nothing rejected. No MCP, no plugin, no orchestration, no new surface — it
+is wiring inside commands that already exist, closing a gap against a
+written decision. It does not grow the CLI either: the four commands
+already existed on both paths.
+
+### Trade-offs
+
+- `tui.rs` was at 2882 LOC against a 3000 ceiling (D-023). The wiring had
+  to fit in roughly a hundred lines, or the prompt templates had to move
+  out first. They now live in one place and both surfaces read them, which
+  is smaller than the duplication it replaces.
+- The TUI's output for these four commands changes: it now ends with
+  `VERDICT:` and a structured block. That is the point, but it is a
+  user-visible change, not an internal one.
+- The TUI templates were not unified with the CLI's — the structured
+  sections were appended to the TUI copies, which kept the diff small and
+  `tui.rs` under its ceiling. Unifying the four templates into one place is
+  still worth doing, and is not this version.
+- Session state still lives in the data dir while decision records live in
+  the cwd. That split is unchanged and is a candidate for its own entry.
+
+## D-032 · Deferred — standalone CLI commands inherit an auto-created session (2026-09-09)
+
+**Finding:** every verdict command on the CLI path calls
+`record_session_step(..., auto_create = true)`. The first standalone
+`naysay check` therefore creates a decision session rooted at its own idea,
+and every later standalone command — including ones about unrelated ideas —
+is injected with that session's context by `resolve()`.
+
+**Evidence:** during v0.10 dogfooding, `naysay check "<the GIF-tool
+decision>"` answered the *previous* check's question about the TUI, because
+the session rooted at "v0.10: wire the TUI's four verdict commands…" was
+injected ahead of it. `naysay session close` produced the correct
+`VERDICT: DON'T BUILD`; the polluted record was deleted.
+
+**Why it is deferred, not fixed here:** `record_session_step`'s own doc
+comment says "CLI standalone passes false; REPL/TUI pass true" — the shared
+`premortem` / `check` / `spec` / `postmortem` functions cannot distinguish
+the two callers today, so fixing it means threading a flag through four
+signatures and eight call sites. That is a design change (should a
+standalone CLI sequence link into one session, and if so, how is that
+session scoped?), not a typo fix.
+
+**Condition that re-opens it:** the first time a standalone CLI run answers
+the wrong question again, or before any release that advertises CLI
+scripting. The fix is not "stop recording" — it is deciding what a
+standalone session means.

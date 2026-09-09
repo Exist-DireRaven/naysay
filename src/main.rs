@@ -99,6 +99,11 @@ enum Command {
         /// The idea to interrogate
         idea: String,
     },
+    /// Interrogate an engineering decision before it becomes code
+    Check {
+        /// The decision about to be made (a dependency, an abstraction, a rewrite)
+        idea: String,
+    },
     /// Harden a surviving idea into a spec your coding agent can execute
     Spec {
         /// The idea to spec out
@@ -341,6 +346,7 @@ pub(crate) struct Prompts {
     pub contrarian: Option<String>,
     pub use_cases: Option<String>,
     pub premortem: Option<String>,
+    pub check: Option<String>,
     pub spec: Option<String>,
     pub pros: Option<String>,
     pub cons: Option<String>,
@@ -391,6 +397,7 @@ impl Prompts {
             "contrarian" => &self.contrarian,
             "use_cases" => &self.use_cases,
             "premortem" => &self.premortem,
+            "check" => &self.check,
             "spec" => &self.spec,
             "pros" => &self.pros,
             "cons" => &self.cons,
@@ -422,6 +429,7 @@ const PROMPTS_TEMPLATE: &str = "\
 # contrarian = \"Steel-man the opposite of: {claim}\"
 # use_cases = \"User scenarios for {thing}.\"
 # premortem = \"Autopsy for {idea}.\"
+# check = \"Pre-existence check for {idea}.\"
 # spec = \"Spec for {idea}.\"
 # pros = \"Strengths of {idea}.\"
 # cons = \"Weaknesses of {idea}.\"
@@ -746,6 +754,17 @@ async fn main() -> Result<()> {
         }
         Some(Command::Premortem { idea }) => {
             premortem(
+                &idea,
+                &[],
+                cli.parent.as_deref(),
+                cli.save.as_deref(),
+                cli.json,
+            )
+            .await?;
+            Ok(())
+        }
+        Some(Command::Check { idea }) => {
+            check(
                 &idea,
                 &[],
                 cli.parent.as_deref(),
@@ -1255,11 +1274,92 @@ async fn premortem(
             })
         },
     )?;
-    if let Err(e) = store::save_decision("premortem", idea, &content, parent) {
-        eprintln!("decision-store: save failed: {e}");
-    } else {
-        eprintln!("decision-store: saved premortem under .naysay/decisions/");
+    Ok(content)
+}
+
+// ─── check ──────────────────────────────────────────────────────────────────────────────
+
+/// The engineering-decision entry point (D-023's `naysay check`, shipped in
+/// v0.9). Same interrogation as premortem, aimed at a decision that is about
+/// to become code — a dependency, an abstraction, a rewrite. Deliberately
+/// shorter and cheaper than premortem: this one is meant to run many times
+/// per project, not once per project.
+async fn check(
+    idea: &str,
+    history: &[Message],
+    parent: Option<&str>,
+    save_path: Option<&str>,
+    json: bool,
+) -> Result<String> {
+    let mut prompt = format!(
+        "The user is about to make this engineering decision: {idea}\n\n\
+         Run the pre-existence check. This decision is about to become code, \
+         a dependency, or an abstraction — interrogate it before it exists:\n\n\
+         1. The actual problem — one sentence: what need does this serve? If \
+         the decision is a solution looking for a problem, say so here.\n\
+         2. Existing coverage — what already does this: in this repo, in the \
+         dependencies already installed, or in a tool already on PATH? Name \
+         it. If something covers most of it, say how much.\n\
+         3. Minimum form — the smallest version that satisfies the need. What \
+         could be deleted from the proposal and still work?\n\
+         4. Six-month failure mode — how this becomes maintenance debt: the \
+         dependency that rots, the abstraction nobody calls, the code the \
+         next agent has to read.\n\
+         5. Verdict — build it, reuse what exists, or don't build at all. \
+         Then end the whole output with a final line of exactly \
+         `VERDICT: BUILD` or `VERDICT: DON'T BUILD` — no other words on \
+         that line.\n\n\
+         After the check, add a short ASSUMPTIONS section: 3-5 things this \
+         decision depends on being true, each specific enough to be checkable.\n\n\
+         Be specific to this decision. Generic engineering advice is \
+         worthless here."
+    );
+    let ctx = store::resolve(&store::Op::Check, idea, parent);
+    if !ctx.text.is_empty() {
+        prompt = format!("{prompt}\n\n{}", ctx.text);
     }
+
+    let content = call_llm(&prompt, history, 900, 0.4).await?;
+    note_usage_stderr();
+    let saved_ref = match store::save_decision("check", idea, &content, parent) {
+        Ok(id) => {
+            eprintln!("decision-store: saved check {id} under .naysay/decisions/");
+            Some(id)
+        }
+        Err(e) => {
+            eprintln!("decision-store: save failed: {e}");
+            None
+        }
+    };
+    store::record_session_step(
+        &store::Op::Check,
+        idea,
+        &content,
+        saved_ref.as_deref(),
+        true,
+    );
+    emit_output(
+        "check",
+        save_path,
+        json,
+        &content,
+        |c| {
+            format!(
+                "
+── check: {idea} ──
+
+{c}
+"
+            )
+        },
+        |c| {
+            serde_json::json!({
+                "idea": idea,
+                "kind": "check",
+                "check": c,
+            })
+        },
+    )?;
     Ok(content)
 }
 
@@ -1613,6 +1713,7 @@ async fn dispatch_repl(line: &str, st: &mut ReplState) -> Result<ReplAction> {
         "help" | "?" => {
             let help_text = "commands:\n  \
                  premortem <idea>    assume it died in 6 months — the autopsy\n  \
+                 check <decision>    interrogate an engineering decision before code\n  \
                  postmortem <idea>   it's over — the review + decision-log entry\n  \
                  spec <idea>         harden an idea into a spec for your agent\n  \
                  seed <topic>        brainstorm 8 angles\n  \
@@ -1656,6 +1757,16 @@ async fn dispatch_repl(line: &str, st: &mut ReplState) -> Result<ReplAction> {
             } else {
                 let ctx = st.context();
                 let content = premortem(rest, &ctx, None, None, false).await?;
+                st.record(line, &content);
+            }
+            Ok(ReplAction::Continue)
+        }
+        "check" => {
+            if rest.is_empty() {
+                eprintln!("usage: check <decision>");
+            } else {
+                let ctx = st.context();
+                let content = check(rest, &ctx, None, None, false).await?;
                 st.record(line, &content);
             }
             Ok(ReplAction::Continue)
@@ -2525,6 +2636,20 @@ fn sessions_show(input: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::store::*;
+
+    // ── Prompts ───────────────────────────────────────────────────────────────────────────
+
+    /// `check` joined the prompts.toml keys in v0.9. A mismatch between the
+    /// struct field and the `get` arm would make the override silently no-op.
+    #[test]
+    fn prompts_check_key_resolves_override_and_default() {
+        let custom = Prompts {
+            check: Some("CUSTOM {idea}".into()),
+            ..Default::default()
+        };
+        assert_eq!(custom.get("check", "DEFAULT"), "CUSTOM {idea}");
+        assert_eq!(Prompts::default().get("check", "DEFAULT"), "DEFAULT");
+    }
 
     // ── number_lines ──────────────────────────────────────────────────────────────────────
 

@@ -1,0 +1,52 @@
+[
+  {
+    "claim": "the cli commands for handling verdicts are already integrated with the decision store and can serve as a reference for the tui integration",
+    "display": "The CLI commands for handling verdicts are already integrated with the decision store and can serve as a reference for the TUI integration.",
+    "status": "UNKNOWN",
+    "first_source": "check-a7ae928531f6",
+    "last_source": "check-a7ae928531f6",
+    "ts_first": 1788959794,
+    "ts_last": 1788959794,
+    "note": null
+  },
+  {
+    "claim": "the tui code is modular enough to allow for the integration of the decision store without significant refactoring",
+    "display": "The TUI code is modular enough to allow for the integration of the decision store without significant refactoring.",
+    "status": "UNKNOWN",
+    "first_source": "check-a7ae928531f6",
+    "last_source": "check-a7ae928531f6",
+    "ts_first": 1788959794,
+    "ts_last": 1788959794,
+    "note": null
+  },
+  {
+    "claim": "the decision store api will remain stable or will be versioned in a way that allows the tui to adapt to changes without breaking",
+    "display": "The decision store API will remain stable or will be versioned in a way that allows the TUI to adapt to changes without breaking.",
+    "status": "UNKNOWN",
+    "first_source": "check-a7ae928531f6",
+    "last_source": "check-a7ae928531f6",
+    "ts_first": 1788959794,
+    "ts_last": 1788959794,
+    "note": null
+  },
+  {
+    "claim": "the tui prompt templates can be updated to match the cli without introducing new dependencies or significantly increasing the loc",
+    "display": "The TUI prompt templates can be updated to match the CLI without introducing new dependencies or significantly increasing the LOC.",
+    "status": "UNKNOWN",
+    "first_source": "check-a7ae928531f6",
+    "last_source": "check-a7ae928531f6",
+    "ts_first": 1788959794,
+    "ts_last": 1788959794,
+    "note": null
+  },
+  {
+    "claim": "the development team has the capacity to handle the integration and testing of the tui commands with the decision store within the current project timeline",
+    "display": "The development team has the capacity to handle the integration and testing of the TUI commands with the decision store within the current project timeline.",
+    "status": "UNKNOWN",
+    "first_source": "check-a7ae928531f6",
+    "last_source": "check-a7ae928531f6",
+    "ts_first": 1788959794,
+    "ts_last": 1788959794,
+    "note": null
+  }
+]

@@ -142,6 +142,7 @@ naysay                        interactive transcript (default)
 naysay --continue             resume your most recent session
 naysay repl                   plain REPL (scriptable, pipeable)
 naysay premortem <idea>       assume it died in 6 months — read the autopsy
+naysay check <decision>       interrogate an engineering decision before it becomes code
 naysay spec <idea>            harden an idea into a spec for your agent
 naysay postmortem <idea>      it's over — the review + decision-log entry
 naysay seed <topic>           brainstorm 8 angles
@@ -214,7 +215,7 @@ dependencies, no installer.
 
 naysay is developed by a human working with AI coding agents, under
 rules that keep ownership human: every design decision is logged in
-[DECISIONS.md](DECISIONS.md) (17 entries and counting), the codebase
+[DECISIONS.md](DECISIONS.md) (31 entries and counting), the codebase
 is mapped in [CODEMAP.md](CODEMAP.md), and the agents that help
 maintain it are bound by [AGENTS.md](AGENTS.md). The premortem in
 this README killed this project's own predecessor — the lineage is
@@ -226,7 +227,7 @@ you want in.
 The tool runs on itself. Current state, queryable in this repo:
 
 ```
-logged decisions   : 26 (DECISIONS.md D-001 … D-026)
+logged decisions   : 31 (DECISIONS.md D-001 … D-032; D-027 unused)
 kill cases         : 2 published (examples/) — incl. this tool's predecessor
 survivor           : the tool you are reading
 assumption registry: live (UNKNOWN → VALID/INVALIDATED lifecycle)
@@ -345,6 +346,7 @@ naysay                        交互式会话(默认)
 naysay --continue             接着上一次的会话继续
 naysay repl                   纯 REPL(可脚本化、可管道)
 naysay premortem <idea>       假设它六个月后死了 — 看尸检
+naysay check <decision>       在它变成代码之前审问这个工程决策
 naysay spec <idea>            把想法硬化成 agent 能用的 spec
 naysay postmortem <idea>      项目结束了 — 复盘 + 决策日志
 naysay seed <topic>           8 个角度
@@ -403,7 +405,7 @@ naysay 由一个人类与 AI 协作开发,规则保证所有权留在人这一�
 这个工具跑在自己身上。当前状态，本仓库内可查：
 
 ```
-已入档决策   : 23 条（DECISIONS.md D-001 … D-023）
+已入档决策   : 31 条（DECISIONS.md D-001 … D-032；D-027 未使用）
 杀掉的项目   : 2 个已发布案例（examples/）—— 包括本工具的前身
 幸存者       : 你正在读的这个工具
 calibration  : naysay calibration（等真实决策闭环积累）

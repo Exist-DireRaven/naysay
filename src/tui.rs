@@ -525,6 +525,7 @@ const COMMANDS: &[&str] = &[
     "use-cases",
     "usecases",
     "premortem",
+    "check",
     "spec",
     "postmortem",
     "pros",
@@ -992,6 +993,7 @@ fn submit_line(
                  examples <concept>     real-world instances\n\n\
                  verdict ─────────────────────────────────────────\n  \
                  premortem <idea>       assume it died in 6 months\n  \
+                 check <decision>       interrogate an engineering decision\n  \
                  spec <idea>            spec for your coding agent\n  \
                  postmortem <idea>      it's over — review + decision-log\n\n\
                  reading ────────────────────────────────────────\n  \
@@ -1162,6 +1164,7 @@ fn submit_line(
         "use-cases" | "usecases" if !rest.is_empty() => Some(("use-cases", rest.to_string())),
         // Verdict family
         "premortem" if !rest.is_empty() => Some(("premortem", rest.to_string())),
+        "check" if !rest.is_empty() => Some(("check", rest.to_string())),
         "spec" if !rest.is_empty() => Some(("spec", rest.to_string())),
         "postmortem" if !rest.is_empty() => Some(("postmortem", rest.to_string())),
         // Analysis family
@@ -1291,6 +1294,16 @@ fn submit_line(
             // Verdict
             "premortem" => {
                 run_premortem(
+                    &model_for_task,
+                    &arg_for_task,
+                    &context,
+                    &prompts_for_task,
+                    on_delta,
+                )
+                .await
+            }
+            "check" => {
+                run_check(
                     &model_for_task,
                     &arg_for_task,
                     &context,
@@ -1506,6 +1519,18 @@ async fn run_use_cases<F: FnMut(&str) + Send>(
 
 // ─── Verdict family ─────────────────────────────────────────────────────────────────────
 
+/// Prepend the decision-memory context a verdict command should see.
+/// Mirrors the CLI path: without it the TUI's records would be write-only —
+/// saved but never consulted (v0.10 / D-031).
+fn with_memory(op: crate::store::Op, idea: &str, prompt: String) -> String {
+    let ctx = crate::store::resolve(&op, idea, None);
+    if ctx.text.is_empty() {
+        prompt
+    } else {
+        format!("{prompt}\n\n{}", ctx.text)
+    }
+}
+
 async fn run_premortem<F: FnMut(&str) + Send>(
     model: &str,
     idea: &str,
@@ -1525,14 +1550,70 @@ async fn run_premortem<F: FnMut(&str) + Send>(
          4. The version that survived — the smallest cut of this idea that \
          dodges every cause of death above.\n\
          5. Verdict — build it (at what scope) or don't (and what to do \
-         instead).\n\n\
+         instead). Then end the whole output with a final line of exactly \
+         `VERDICT: BUILD` or `VERDICT: DON'T BUILD` — no other words on \
+         that line.\n\n\
+         After the autopsy, add a short STRUCTURED section:\n\n\
+         ASSUMPTIONS — 3-5 things the build depends on being true. Be \
+         specific ('a person will run this 3x/week', not 'people will want \
+         this'). If you cannot name the assumption, name why you can't.\n\n\
+         EVIDENCE — for each assumption: what would prove it true? what \
+         would prove it false? Use only known data; if you have none, say \
+         'none yet' rather than inventing.\n\n\
+         UNKNOWNS — 2-4 things that, if they turned out a certain way, \
+         would flip the verdict. Be specific about the direction of the flip.\n\n\
+         CONFIDENCE — a number 0..1 for the verdict itself. 0.5 means you \
+         would change your mind for a free coffee. 0.9 means you would bet \
+         money on it. Pick a number; do not say 'medium'.\n\n\
          Be specific to this idea. Generic startup advice is worthless here.";
     let template = prompts.get("premortem", DEFAULT);
     let prompt = template.replace("{idea}", idea);
+    let prompt = with_memory(crate::store::Op::Premortem, idea, prompt);
     let content = call_llm_stream(model, &prompt, history, 1500, 0.6, on_delta)
         .await
         .map_err(|e| enrich_error(&format!("{e:#}")))?;
+    crate::store::save_verdict(&crate::store::Op::Premortem, "premortem", idea, &content);
     verify_and_format("premortem", idea, &content)
+}
+
+/// v0.9 — the engineering-decision entry point, shorter and cheaper than
+/// premortem because it is meant to run many times per project.
+async fn run_check<F: FnMut(&str) + Send>(
+    model: &str,
+    idea: &str,
+    history: &[crate::Message],
+    prompts: &Prompts,
+    on_delta: F,
+) -> Result<String, String> {
+    const DEFAULT: &str = "The user is about to make this engineering decision: {idea}\n\n\
+         Run the pre-existence check. This decision is about to become code, \
+         a dependency, or an abstraction — interrogate it before it exists:\n\n\
+         1. The actual problem — one sentence: what need does this serve? If \
+         the decision is a solution looking for a problem, say so here.\n\
+         2. Existing coverage — what already does this: in this repo, in the \
+         dependencies already installed, or in a tool already on PATH? Name \
+         it. If something covers most of it, say how much.\n\
+         3. Minimum form — the smallest version that satisfies the need. What \
+         could be deleted from the proposal and still work?\n\
+         4. Six-month failure mode — how this becomes maintenance debt: the \
+         dependency that rots, the abstraction nobody calls, the code the \
+         next agent has to read.\n\
+         5. Verdict — build it, reuse what exists, or don't build at all. \
+         Then end the whole output with a final line of exactly \
+         `VERDICT: BUILD` or `VERDICT: DON'T BUILD` — no other words on \
+         that line.\n\n\
+         After the check, add a short ASSUMPTIONS section: 3-5 things this \
+         decision depends on being true, each specific enough to be checkable.\n\n\
+         Be specific to this decision. Generic engineering advice is \
+         worthless here.";
+    let template = prompts.get("check", DEFAULT);
+    let prompt = template.replace("{idea}", idea);
+    let prompt = with_memory(crate::store::Op::Check, idea, prompt);
+    let content = call_llm_stream(model, &prompt, history, 900, 0.4, on_delta)
+        .await
+        .map_err(|e| enrich_error(&format!("{e:#}")))?;
+    crate::store::save_verdict(&crate::store::Op::Check, "check", idea, &content);
+    verify_and_format("check", idea, &content)
 }
 
 async fn run_spec<F: FnMut(&str) + Send>(
@@ -1549,7 +1630,14 @@ async fn run_spec<F: FnMut(&str) + Send>(
          # Goal — one paragraph: what exists when this is done, and for whom.\n\
          # Non-goals — what this is NOT. Anything unlisted here, the agent \
          will build on a whim.\n\
+         # Assumptions — 2-4 things the build depends on being true. Be \
+         specific; 'users will want this' is not an assumption, it is a hope.\n\
          # Success criteria — 3-5 concrete, checkable conditions.\n\
+         # Failure conditions — 2-4 conditions under which the build is \
+         considered failed regardless of whether it runs. A failure \
+         condition is a deal-breaker; not a bug list.\n\
+         # Risk budget — the worst case the user is willing to absorb \
+         (e.g. '1 weekend of my time, $20 of infra, then kill').\n\
          # Constraints — language, platform, budget, things that must not change.\n\
          # Milestones — ordered; each one independently runnable or checkable.\n\
          # Open questions — what the user must decide; the agent should ask, \
@@ -1558,9 +1646,11 @@ async fn run_spec<F: FnMut(&str) + Send>(
          improvisation is where rework is born.";
     let template = prompts.get("spec", DEFAULT);
     let prompt = template.replace("{idea}", idea);
+    let prompt = with_memory(crate::store::Op::Spec, idea, prompt);
     let content = call_llm_stream(model, &prompt, history, 2000, 0.4, on_delta)
         .await
         .map_err(|e| enrich_error(&format!("{e:#}")))?;
+    crate::store::save_verdict(&crate::store::Op::Spec, "spec", idea, &content);
     verify_and_format("spec", idea, &content)
 }
 
@@ -1605,9 +1695,11 @@ async fn run_postmortem<F: FnMut(&str) + Send>(
          Be specific to this project. Blame decisions, not people.";
     let template = prompts.get("postmortem", DEFAULT);
     let prompt = template.replace("{idea}", idea);
+    let prompt = with_memory(crate::store::Op::Postmortem, idea, prompt);
     let content = call_llm_stream(model, &prompt, history, 1500, 0.5, on_delta)
         .await
         .map_err(|e| enrich_error(&format!("{e:#}")))?;
+    crate::store::save_verdict(&crate::store::Op::Postmortem, "postmortem", idea, &content);
     verify_and_format("postmortem", idea, &content)
 }
 
