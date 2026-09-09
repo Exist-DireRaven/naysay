@@ -16,7 +16,56 @@ counter resets. Historical pair entries are preserved below for lineage.
 
 ## English
 
-### naysay v0.10.0 — 2026-09-09
+> **Version-line note (2026-09-09).** `0.1.0` was the only published release.
+> `0.2.0`–`0.10.0` were internal iterations that never reached crates.io;
+> they are archived as a git bundle plus a source zip. This release publishes
+> their combined result as **0.2.0** — the second public release. The internal
+> entries below are kept for lineage, and their version numbers do not
+> correspond to published artifacts.
+
+### naysay v0.2.0 — 2026-09-09 · first public release since 0.1.0
+
+Everything the internal 0.2–0.10 line built, shipped as one version.
+
+#### Added
+
+- **`naysay check <decision>`** — the engineering-decision interrogation:
+  the actual problem, existing coverage, minimum form, six-month failure
+  mode, verdict. Ends with `VERDICT: BUILD | DON'T BUILD` so `calibration`
+  can link it to a later postmortem. Deliberately cheaper than premortem
+  (900 max tokens) because it runs many times per project.
+- **Decision memory** — every verdict writes a record to
+  `.naysay/decisions/` and a step to its decision session. Premortem and
+  check prompts carry prior verdicts on similar ideas plus
+  assumption-risk lines.
+- **Assumption lifecycle registry** (`.naysay/assumptions.json`) —
+  `UNKNOWN → VALID / QUESTIONED / INVALIDATED`, fed by the structured
+  `ASSUMPTIONS` block and flipped by postmortems or `decisions verify`.
+- **`decisions` / `session` / `calibration` subcommands** — query the
+  store, walk a decision's lineage, inspect the exploration tree, and
+  compare premortem verdicts against real outcomes.
+- **Structured output** — `ASSUMPTIONS / EVIDENCE / UNKNOWNS / CONFIDENCE`
+  on premortem, `Assumptions / Failure conditions / Risk budget` on spec,
+  `OUTCOME:` on postmortem.
+- **Interactive provider picker** — Ollama, DeepSeek, GLM, OpenAI, MiniMax,
+  OpenRouter, or any OpenAI-compatible endpoint, written to `naysay.toml`
+  with the key in the OS keyring.
+- **Full line editing and native wide-char rendering** in the TUI.
+
+#### Fixed
+
+- `premortem` wrote two decision records per run (v0.3–v0.10).
+- The assumption registry wrote to a sibling of the intended directory.
+
+#### Known
+
+- **D-032:** standalone CLI commands auto-create a decision session, so a
+  later standalone command on an unrelated idea is injected with the first
+  one's context. Workaround: `naysay session close`.
+
+---
+
+### naysay v0.10.0 — 2026-09-09 *(internal, unpublished)*
 
 **The decision loop closes on the surface people actually use.** Until this
 release the TUI — the default entry point — remembered nothing: no records,
@@ -580,7 +629,50 @@ First naysay release. Built on pair v1.3.
 
 ## 中文
 
-### naysay v0.10.0 — 2026-09-09
+> **版本线说明（2026-09-09）。** 只有 `0.1.0` 真正发布过。`0.2.0`–`0.10.0`
+> 是内部迭代，从未上 crates.io；它们已作为 git bundle + 源码 zip 归档。
+> 本次把它们合并后的成果作为 **0.2.0** 发布——第二个公开发布版本。下面的
+> 内部条目保留以记录血统，其版本号不对应任何已发布的产物。
+
+### naysay v0.2.0 — 2026-09-09 · 0.1.0 之后的首次公开发布
+
+内部 0.2–0.10 这条线造出来的东西，作为一版发布。
+
+#### 新增
+
+- **`naysay check <decision>`** — 工程决策审问：真实问题、已有覆盖、最小
+  形态、六个月失败模式、判决。以 `VERDICT: BUILD | DON'T BUILD` 结尾，
+  让 `calibration` 能连到之后的 postmortem。比 premortem 便宜（900
+  max tokens），因为它要跑很多次。
+- **决策记忆** — 每条判决写入 `.naysay/decisions/` 记录和 decision
+  session 的一步；premortem 与 check 的 prompt 带相似想法的历史判决和
+  假设风险行。
+- **假设生命周期注册表**（`.naysay/assumptions.json`）——
+  `UNKNOWN → VALID / QUESTIONED / INVALIDATED`，由结构化 `ASSUMPTIONS`
+  段落喂入，由 postmortem 或 `decisions verify` 翻转。
+- **`decisions` / `session` / `calibration` 子命令** — 查询存储、走决策
+  血统、看探索树、把 premortem 判决和真实结果对照。
+- **结构化输出** — premortem 的 `ASSUMPTIONS / EVIDENCE / UNKNOWNS /
+  CONFIDENCE`、spec 的 `Assumptions / Failure conditions / Risk budget`、
+  postmortem 的 `OUTCOME:`。
+- **交互式 provider 选择器** — Ollama、DeepSeek、GLM、OpenAI、MiniMax、
+  OpenRouter 或任意 OpenAI 兼容端点，写入 `naysay.toml`，key 进系统
+  keyring。
+- **TUI 完整行编辑 + 宽字符原生渲染**。
+
+#### 修复
+
+- `premortem` 每次运行写两条记录（v0.3–v0.10）。
+- 假设注册表写到了目标目录的兄弟目录。
+
+#### 已知
+
+- **D-032：** CLI 独立命令会自动创建 decision session，之后一条关于无关
+  想法的独立命令会被注入第一条的上下文。绕过方式：`naysay session close`。
+
+---
+
+### naysay v0.10.0 — 2026-09-09 *（内部，未发布）*
 
 **决策循环在人真正会用的那个界面上闭合了。** 在此之前，TUI（默认入口）
 什么都不记：不写记录、不注入记忆。现在四个判决命令都写入存储、也从存储
