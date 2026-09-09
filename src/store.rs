@@ -75,6 +75,39 @@ pub(crate) fn make_decision_id(nanos: u128) -> String {
 /// accepts `## HEADING`, `# HEADING`, and bare `HEADING:`; grabs `- ` /
 /// `* ` / `1. ` bullets until a blank line or the next heading. Returns
 /// an empty list when the heading is absent — never an error.
+/// Strip the decoration a model wraps a section heading in: `#` markers,
+/// `*`/`_` emphasis, a trailing colon, surrounding whitespace. Models are
+/// inconsistent — `### ASSUMPTIONS`, `**ASSUMPTIONS**:` and `**假设**:` all
+/// name the same section, and only the first used to match.
+fn heading_key(line: &str) -> String {
+    line.trim()
+        .trim_matches(|c: char| c == '#' || c == '*' || c == '_' || c == ':' || c.is_whitespace())
+        .to_lowercase()
+}
+
+/// `want` is already lowercased and colon-stripped. Chinese answers name the
+/// same sections in Chinese; without these aliases a `**假设**:` block
+/// extracts to nothing and the assumption registry stays empty.
+fn heading_matches(line: &str, want: &str) -> bool {
+    let key = heading_key(line);
+    let aliases: &[&str] = match want {
+        "assumptions" => &["假设", "前提", "假设条件"],
+        "evidence" => &["证据", "依据"],
+        "unknowns" => &["未知", "未知项"],
+        "confidence" => &["置信度", "信心"],
+        "failure conditions" => &["失败条件", "失败前提"],
+        _ => &[],
+    };
+    std::iter::once(want)
+        .chain(aliases.iter().copied())
+        .any(|name| {
+            key == name
+                || key.strip_prefix(name).is_some_and(|rest| {
+                    rest.is_empty() || !rest.chars().next().unwrap().is_alphanumeric()
+                })
+        })
+}
+
 pub(crate) fn extract_section(body: &str, heading: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_section = false;
@@ -82,8 +115,7 @@ pub(crate) fn extract_section(body: &str, heading: &str) -> Vec<String> {
     for raw in body.lines() {
         let line = raw.trim_end();
         if !in_section {
-            let head = line.trim_start_matches('#').trim().trim_end_matches(':');
-            if head.to_ascii_lowercase() == want {
+            if heading_matches(line, &want) {
                 in_section = true;
             }
         } else {
@@ -116,7 +148,7 @@ pub(crate) fn extract_section(body: &str, heading: &str) -> Vec<String> {
 pub(crate) fn extract_confidence(body: &str) -> Option<u8> {
     for raw in body.lines() {
         let t = raw.trim();
-        if !t.to_uppercase().contains("CONFIDENCE") {
+        if !t.to_uppercase().contains("CONFIDENCE") && !t.contains("置信度") {
             continue;
         }
         let mut digits = String::new();
@@ -379,15 +411,46 @@ pub(crate) fn extract_outcome(body: &str) -> Option<String> {
 
 /// Lowercase alphanumeric word set, words of length 1 dropped. The unit
 /// of deterministic retrieval: no embeddings, no dependencies.
-pub(crate) fn tokenize(text: &str) -> std::collections::HashSet<String> {
-    text.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() > 1)
-        .map(|w| w.to_string())
-        .collect()
+/// CJK scripts have no spaces, so a whole run arrives as one token and two
+/// related Chinese ideas share almost nothing. Character bigrams restore the
+/// overlap without shipping a segmenter.
+fn is_cjk(c: char) -> bool {
+    matches!(c as u32,
+        0x3040..=0x30FF      // kana
+        | 0x3400..=0x4DBF    // CJK ext A
+        | 0x4E00..=0x9FFF    // CJK unified
+        | 0xAC00..=0xD7AF    // hangul
+        | 0xF900..=0xFAFF    // CJK compatibility
+    )
 }
 
-/// Jaccard similarity on token sets. 1.0 = identical sets, 0.0 = disjoint.
+pub(crate) fn tokenize(text: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for w in text
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() > 1)
+    {
+        out.insert(w.to_string());
+        if w.chars().any(is_cjk) {
+            let cs: Vec<char> = w.chars().collect();
+            for pair in cs.windows(2) {
+                out.insert(pair.iter().collect());
+            }
+        }
+    }
+    out
+}
+
+/// Overlap coefficient on token sets: |a ∩ b| / min(|a|, |b|).
+/// 1.0 when the smaller set is contained in the larger, 0.0 when disjoint.
+///
+/// This replaced Jaccard because of the shape of the two sides: the query is
+/// a one-line idea, the document is a full decision body. Jaccard punishes
+/// that length mismatch so hard that a short Chinese idea scored 0.07 against
+/// the record it was actually about, and `decisions relevant` returned
+/// nothing. The threshold and the ranking are unchanged; only the
+/// denominator is.
 pub(crate) fn relevance_score(
     a: &std::collections::HashSet<String>,
     b: &std::collections::HashSet<String>,
@@ -396,8 +459,8 @@ pub(crate) fn relevance_score(
         return 0.0;
     }
     let inter = a.intersection(b).count() as f64;
-    let union = a.union(b).count() as f64;
-    inter / union
+    let smaller = a.len().min(b.len()) as f64;
+    inter / smaller
 }
 
 /// Classify a premortem verdict against the linked postmortem outcome.
@@ -1608,7 +1671,7 @@ mod tests {
     }
 
     #[test]
-    fn relevance_jaccard_bounds_and_ordering() {
+    fn relevance_score_bounds_and_ordering() {
         let a = tokenize("stock monitoring system alerts");
         let same = tokenize("stock monitoring system alerts");
         let partial = tokenize("stock monitoring dashboard");
@@ -1618,6 +1681,57 @@ mod tests {
         let s_none = relevance_score(&a, &none);
         assert!(s_partial > s_none);
         assert_eq!(s_none, 0.0);
+    }
+
+    #[test]
+    fn extract_section_accepts_bold_and_chinese_headings() {
+        // The registry was silently empty for every record written as
+        // `**ASSUMPTIONS**:` (bold) or `**假设**:` (Chinese) — the heading
+        // matcher only knew bare, English, undecorated headings.
+        let bold =
+            "**ASSUMPTIONS**:\n- a person will run this 3x/week\n- setup takes under 10 minutes\n";
+        assert_eq!(
+            extract_section(bold, "ASSUMPTIONS"),
+            vec![
+                "a person will run this 3x/week",
+                "setup takes under 10 minutes"
+            ]
+        );
+        let zh = "### 假设\n1. 现成工具够用\n2. 这是一次性任务\n";
+        assert_eq!(
+            extract_section(zh, "ASSUMPTIONS"),
+            vec!["现成工具够用", "这是一次性任务"]
+        );
+        let dashed = "ASSUMPTIONS — 3-5 things the build depends on\n- one thing\n";
+        assert_eq!(extract_section(dashed, "ASSUMPTIONS"), vec!["one thing"]);
+    }
+
+    #[test]
+    fn chinese_idea_finds_its_own_record() {
+        // The exact pair that returned nothing: a one-line Chinese query and
+        // the long record it is about. Overlap must clear the 0.12 gate.
+        let query = tokenize("把图片做成 GIF 的动画管线");
+        let record = tokenize(
+            "把一张图变成 GIF：是否要自己写一条完整的 sprite 动画管线（分割、对齐、插帧、抖动修正），还是用现成的 ffmpeg / 已有工具",
+        );
+        assert!(
+            relevance_score(&query, &record) > 0.12,
+            "score was {}",
+            relevance_score(&query, &record)
+        );
+    }
+
+    #[test]
+    fn tokenize_gives_chinese_ideas_overlap() {
+        // CJK runs arrive as single tokens, so two related Chinese ideas used
+        // to score 0.0 and `decisions relevant` found nothing.
+        let a = tokenize("把一张图变成 GIF：自己写完整管线还是用 ffmpeg");
+        let b = tokenize("把图片做成 GIF 的动画管线");
+        assert!(a.contains("变成") && b.contains("做成"), "bigrams expected");
+        assert!(
+            relevance_score(&a, &b) > 0.0,
+            "related Chinese ideas must share tokens"
+        );
     }
 
     #[test]

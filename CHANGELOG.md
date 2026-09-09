@@ -39,6 +39,18 @@ model call, on every surface. Per D-034.
 - **No re-onboarding on a wrong key.** Only a missing key triggers the
   picker; an auth failure surfaces the provider's own error.
 
+#### Fixed
+
+- **Assumption extraction no longer assumes English or bare headings.** A
+  record whose section headings were bold (`**ASSUMPTIONS**:`) or Chinese
+  (`**假设**:`) extracted zero assumptions; only `### ASSUMPTIONS` matched.
+  Headings are now matched after stripping `#`, `*`, `_` and a trailing
+  colon, and Chinese aliases are accepted. Per D-038.
+- **`decisions relevant` finds Chinese ideas.** Retrieval scored with Jaccard
+  against idea-plus-body, so a one-line Chinese query capped at 0.07 and
+  returned nothing. It now uses the overlap coefficient and CJK character
+  bigrams: the same query returns its record at 0.55.
+
 #### Notes
 
 - No new command, no new dependency — TTY detection is

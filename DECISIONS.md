@@ -1095,3 +1095,47 @@ runs `naysay session start` first. Implicit creation was the bug.
 Two standalone `check` runs on different ideas: the decision-session count is
 unchanged (4 before, 4 after), so the second run no longer receives the
 first's context. 85/85 tests, clippy and fmt clean.
+
+## D-038 · Retrieval and extraction stop assuming English (2026-09-09)
+
+**Decision:** Three fixes to the deterministic half of the decision loop:
+
+1. **Section headings are matched after stripping markdown decoration.**
+   `### ASSUMPTIONS`, `**ASSUMPTIONS**:` and `**假设**:` name the same
+   section. Before, only the bare form matched — so a record with bold
+   headings extracted *zero* assumptions, in English as well as Chinese.
+2. **Chinese section aliases.** 假设 / 前提 → ASSUMPTIONS, 证据 / 依据 →
+   EVIDENCE, 未知 / 未知项 → UNKNOWNS, 置信度 / 信心 → CONFIDENCE, 失败条件 →
+   FAILURE CONDITIONS.
+3. **`relevance_score` is the overlap coefficient, not Jaccard**, and CJK runs
+   contribute character bigrams. The query is a one-line idea, the document a
+   full decision body; Jaccard punished that length mismatch so hard that a
+   Chinese idea scored 0.07 against the record it was about.
+
+### Why
+
+The owner works in Chinese. A Chinese answer produced `**假设**:`, which
+matched no heading, so the registry stayed empty and `decisions relevant`
+found nothing — the two features this project exists for were silent in the
+language the owner actually uses. The audit also found the bug was wider than
+Chinese: **bold English headings failed identically**, which is why
+`check-907ae2686b9d` had `ASSUMPTIONS` in its body and zero assumptions in the
+registry.
+
+### Verification
+
+- Unit: `extract_section_accepts_bold_and_chinese_headings`,
+  `tokenize_gives_chinese_ideas_overlap`, `chinese_idea_finds_its_own_record`.
+- Live: a Chinese `check` grew the registry from 5 to 10 assumptions, all
+  Chinese claims.
+- Live: `decisions relevant "把图片做成 GIF 的动画管线"` now returns the GIF
+  record at 0.55 (was: nothing); the English query still ranks correctly
+  (0.80 for the web-UI record).
+
+### Trade-offs
+
+The overlap coefficient is asymmetric: a short query can match a long document
+on a few shared tokens. For a personal store of tens of records that bias is
+correct — recall matters more than precision — and the ranking plus the
+top-N cap bound the damage. If the store grows into the hundreds, this is the
+first thing to revisit.
